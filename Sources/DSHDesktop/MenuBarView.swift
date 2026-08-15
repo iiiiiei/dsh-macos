@@ -75,7 +75,9 @@ struct MenuBarView: View {
             Button("前往开放平台") {
                 NSWorkspace.shared.open(URL(string: "https://platform.deepseek.com/")!)
             }
-            Button("退出 DSH Desktop") { NSApp.terminate(nil) }
+            Button("退出 DSH Desktop") {
+                NotificationCenter.default.post(name: .dshQuitRequested, object: nil)
+            }
         }
         .padding(.vertical, 6)
     }
@@ -109,4 +111,5 @@ struct MenuBarView: View {
 
 extension Notification.Name {
     static let dshReloadRequested = Notification.Name("dshReloadRequested")
+    static let dshQuitRequested = Notification.Name("dshQuitRequested")
 }

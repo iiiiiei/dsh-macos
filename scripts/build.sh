@@ -49,12 +49,16 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/DSHDesktop"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
-echo "==> [3/4] generate icon"
+echo "==> [3/4] generate icon (官方鲸鱼 logo)"
 ICONSET="$ROOT/.build/AppIcon.iconset"
 rm -rf "$ICONSET"
 mkdir -p "$ICONSET"
-swift -vfsoverlay "$FIX_DIR/overlay.yaml" "$ROOT/scripts/make-icon.swift" "$ICONSET" >/dev/null
+swift -vfsoverlay "$FIX_DIR/overlay.yaml" "$ROOT/scripts/make-icon.swift" \
+  "$ROOT/Resources/whale.svg" "$ICONSET" "$ROOT/.build/whale-icon.png" >/dev/null
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+# 菜单栏模板图标 + 官方 SVG（运行时可用）
+cp "$ROOT/.build/whale-icon.png" "$APP/Contents/Resources/whale-icon.png"
+cp "$ROOT/Resources/whale.svg" "$APP/Contents/Resources/whale.svg"
 
 echo "==> [4/4] codesign (ad-hoc)"
 codesign --force --deep -s - "$APP"

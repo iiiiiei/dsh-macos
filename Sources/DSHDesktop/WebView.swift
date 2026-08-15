@@ -31,8 +31,15 @@ struct HarnessWebView: NSViewRepresentable {
           const orig = window.fetch;
           window.fetch = function () {
             try {
-              const url = typeof arguments[0] === 'string' ? arguments[0] : (arguments[0] && arguments[0].url) || '';
-              if (url.indexOf('/api/session.history') !== -1 || url.indexOf('/api/session.prompt') !== -1) {
+              // DSH 浏览器客户端 doFetch 传入的是 URL 对象（new URL(path, base)），
+              // 取 href 而不是 .url
+              const req = arguments[0];
+              let url = '';
+              if (typeof req === 'string') url = req;
+              else if (req && typeof req.href === 'string') url = req.href;
+              else if (req && typeof req.url === 'string') url = req.url;
+              // 任何带 sessionId 的会话方法都可能暴露“当前打开的会话”
+              if (url.indexOf('/api/session.') !== -1) {
                 const body = arguments[1] && typeof arguments[1].body === 'string' ? JSON.parse(arguments[1].body) : null;
                 if (body && body.payload && body.payload.sessionId) {
                   window.webkit.messageHandlers.dshSession.postMessage({

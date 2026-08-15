@@ -19,12 +19,19 @@ struct MenuBarView: View {
             }
             .padding(.vertical, 4)
 
-            // Token 统计（纯文本，对齐官方 StatsLine 口径）
+            // Token 统计（竖向排列，字号与菜单其它项一致，对齐官方口径）
             if let stats = appState.stats {
-                Text(statsLine(stats))
-                    .font(.caption)
-                    .monospacedDigit()
-                    .padding(.bottom, 4)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("输入 \(formatTokens(stats.billedInputTokens))")
+                        .monospacedDigit()
+                    Text("输出 \(formatTokens(stats.outputTokens))")
+                        .monospacedDigit()
+                    if let hit = stats.cacheHitPercent {
+                        Text("缓存命中 \(hit)%")
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.bottom, 4)
             }
 
             Divider()
@@ -71,19 +78,6 @@ struct MenuBarView: View {
             Button("退出 DSH Desktop") { NSApp.terminate(nil) }
         }
         .padding(.vertical, 6)
-    }
-
-    /// 纯文本一行：`输入 6.2k · 输出 117 · 缓存命中 99%`
-    private func statsLine(_ stats: TokenStats) -> String {
-        var parts: [String] = []
-        if stats.billedInputTokens > 0 || stats.outputTokens > 0 {
-            parts.append("输入 \(formatTokens(stats.billedInputTokens))")
-            parts.append("输出 \(formatTokens(stats.outputTokens))")
-            if let hit = stats.cacheHitPercent {
-                parts.append("缓存命中 \(hit)%")
-            }
-        }
-        return parts.isEmpty ? "暂无用量数据" : parts.joined(separator: " · ")
     }
 
     private func formatTokens(_ n: Int) -> String {

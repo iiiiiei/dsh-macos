@@ -1,0 +1,9 @@
+# 构建产物
+.build/
+build/
+
+# macOS
+.DS_Store
+
+# 临时调试文件
+.tmp/

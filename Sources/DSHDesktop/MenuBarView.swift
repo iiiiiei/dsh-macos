@@ -9,6 +9,15 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
+            // 应用名标识：与其它闪电图标区分开
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.shield.fill")
+                    .foregroundStyle(.blue)
+                Text("DSH Desktop")
+                    .fontWeight(.semibold)
+            }
+            .padding(.vertical, 2)
+
             HStack(spacing: 6) {
                 Circle()
                     .fill(statusColor)

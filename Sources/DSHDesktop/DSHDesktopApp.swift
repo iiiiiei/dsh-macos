@@ -31,7 +31,8 @@ struct DSHDesktopApp: App {
         MenuBarExtra {
             MenuBarView(appState: appState, server: server)
         } label: {
-            Image(systemName: server.status == .running ? "bolt.fill" : "bolt.horizontal.circle")
+            // 用 bolt.shield 作为本应用的专属菜单栏图标（区别于其它应用的 bolt.fill）
+            Image(systemName: server.status == .running ? "bolt.shield.fill" : "bolt.shield")
         }
         .menuBarExtraStyle(.menu)
 

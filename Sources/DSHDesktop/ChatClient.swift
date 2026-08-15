@@ -1,59 +1,105 @@
 import Foundation
 
 /// 迷你输入框的会话客户端：总是新建会话并发送消息。
-/// 协议细节（RPC envelope / 桥接端点）由 .research/dsh-protocol.md 确定。
+/// 协议（经实测验证，详见 .research/dsh-protocol.md）：
+///   POST /api/<method>，信封 {type:"client-request", rpcId, method, payload}
+///   session.create → session.prompt（非流式，{accepted:true}）
+///   → 轮询 session.history 拿 assistant/message 的 text
 @MainActor
 final class ChatClient {
     static let shared = ChatClient()
 
-    /// 新建一个会话并发送消息，返回助手回复文本。
-    /// 优先走桥接插件的 /api/desktop/chat（宿主侧代发，简单可靠）；
-    /// 桥接未激活时降级为直连 DSH RPC。
+    /// 新建会话并发送消息，返回助手回复文本
     func sendNewSession(_ text: String, appState: AppState) async throws -> String {
-        // 1) 尝试桥接插件
-        if appState.bridgeConnected {
-            if let reply = try? await viaBridge(text, appState: appState) {
-                return reply
-            }
+        // 1) 新建会话（默认工作区）
+        let createValue = try await rpc("session.create", payload: [:], appState: appState)
+        guard let sessionId = createValue["sessionId"] as? String else {
+            throw ChatError.bridgeFailed("session.create 响应缺少 sessionId")
         }
-        // 2) 降级：直连 DSH RPC（session.create + session.prompt）
-        return try await viaRPC(text, appState: appState)
+
+        // 2) 发送消息（mode: queue，立即受理，回复异步生成）
+        _ = try await rpc("session.prompt", payload: [
+            "sessionId": sessionId,
+            "mode": "queue",
+            "content": [["type": "text", "text": text]],
+        ], appState: appState)
+
+        // 3) 轮询 history 直到出现 assistant/message（长回复最多等 3 分钟）
+        return try await waitForReply(sessionId: sessionId, appState: appState)
     }
 
-    // MARK: - 桥接插件路径（/api/desktop/chat，插件新增端点）
+    // MARK: - RPC
 
-    private func viaBridge(_ text: String, appState: AppState) async throws -> String {
-        var request = URLRequest(url: appState.url.appendingPathComponent("api/desktop/chat"))
+    private func rpc(_ method: String, payload: [String: Any], appState: AppState) async throws -> [String: Any] {
+        var request = URLRequest(url: appState.url.appendingPathComponent("api/\(method)"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["content": text])
-        request.timeoutInterval = 180 // 长回复可能耗时
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "type": "client-request",
+            "rpcId": UUID().uuidString,
+            "method": method,
+            "payload": payload,
+        ])
+        request.timeoutInterval = 30
         let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw ChatError.bridgeFailed("桥接端点返回非 200")
+            throw ChatError.bridgeFailed("RPC \(method) HTTP 状态 \((response as? HTTPURLResponse)?.statusCode ?? -1)")
         }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let reply = obj["reply"] as? String else {
-            throw ChatError.bridgeFailed("桥接端点响应格式异常")
+              let result = obj["result"] as? [String: Any] else {
+            throw ChatError.bridgeFailed("RPC \(method) 响应格式异常")
         }
-        return reply
+        guard (result["ok"] as? Bool) == true else {
+            let err = result["error"] as? [String: Any]
+            throw ChatError.bridgeFailed("RPC \(method) 失败：\(err?["message"] as? String ?? "未知错误")")
+        }
+        return result["value"] as? [String: Any] ?? [:]
     }
 
-    // MARK: - 直连 RPC 路径（协议见 .research/dsh-protocol.md）
+    private func waitForReply(sessionId: String, appState: AppState) async throws -> String {
+        let deadline = Date().addingTimeInterval(180)
+        while Date() < deadline {
+            if let reply = try? await fetchLatestAssistantMessage(sessionId: sessionId, appState: appState),
+               !reply.isEmpty {
+                return reply
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+        }
+        throw ChatError.bridgeFailed("等待回复超时（180s）")
+    }
 
-    private func viaRPC(_ text: String, appState: AppState) async throws -> String {
-        throw ChatError.rpcNotReady("直连 RPC 协议待接入（桥接插件激活后自动使用）")
+    /// 取该会话最新的 assistant/message 文本；没有则返回 nil
+    private func fetchLatestAssistantMessage(sessionId: String, appState: AppState) async throws -> String? {
+        let value = try await rpc("session.history", payload: [
+            "sessionId": sessionId,
+            "maxMessages": 20,
+        ], appState: appState)
+        guard let entries = value["events"] as? [[String: Any]] else { return nil }
+        var latest: String?
+        for entry in entries {
+            guard let event = entry["event"] as? [String: Any],
+                  event["type"] as? String == "assistant/message",
+                  let data = event["data"] as? [String: Any],
+                  let message = data["message"] as? [String: Any],
+                  let content = message["content"] as? [[String: Any]] else { continue }
+            let texts = content.compactMap { part -> String? in
+                guard part["type"] as? String == "text", let t = part["text"] as? String else { return nil }
+                return t
+            }
+            if !texts.isEmpty {
+                latest = texts.joined(separator: "\n")
+            }
+        }
+        return latest
     }
 }
 
 enum ChatError: LocalizedError {
     case bridgeFailed(String)
-    case rpcNotReady(String)
 
     var errorDescription: String? {
         switch self {
         case .bridgeFailed(let msg): return msg
-        case .rpcNotReady(let msg): return msg
         }
     }
 }

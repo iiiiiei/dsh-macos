@@ -130,9 +130,8 @@ struct MiniPanelView: View {
             Divider()
 
             // 迷你输入：总是新建会话并发送
-            TextField("给 DSH 发消息（将新建会话）…", text: $message, axis: .vertical)
+            TextField("给 DSH 发消息（将新建会话）…", text: $message)
                 .textFieldStyle(.roundedBorder)
-                .lineLimit(1...4)
                 .onSubmit { send() }
 
             if let sendFeedback {
@@ -143,7 +142,6 @@ struct MiniPanelView: View {
 
             HStack {
                 Button("发送", action: send)
-                    .keyboardShortcut(.return, modifiers: [])
                     .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Spacer()
                 Button("前往开放平台") {

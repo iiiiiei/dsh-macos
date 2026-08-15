@@ -5,6 +5,7 @@ import AppKit
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var server: ServerManager
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -36,6 +37,11 @@ struct MenuBarView: View {
 
             Divider()
 
+            Button("显示主窗口") {
+                NSApp.unhide(nil)
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
             Button("在浏览器中打开") {
                 NSWorkspace.shared.open(appState.url)
             }

@@ -34,6 +34,14 @@ struct ContentView: View {
         .frame(minWidth: 960, minHeight: 640)
         .onAppear {
             bootstrap()
+            // 沉浸式：内容延伸到标题栏区域（配合 hiddenTitleBar 真正顶到顶）
+            DispatchQueue.main.async {
+                if let window = NSApp.windows.first(where: { $0.title.hasPrefix("DSH Desktop") }) {
+                    window.titlebarAppearsTransparent = true
+                    window.titleVisibility = .hidden
+                    window.styleMask.insert(.fullSizeContentView)
+                }
+            }
         }
         .onChange(of: appState.pageTitle) { newTitle in
             updateWindowTitle(newTitle)

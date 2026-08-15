@@ -30,21 +30,7 @@ let specs: [(name: String, size: Int)] = [
     ("icon_512x512@2x.png", 1024),
 ]
 
-/// 在给定 rect 内绘制白色鲸鱼（用 SVG alpha 作掩码）
-func drawWhiteWhale(in rect: NSRect) {
-    let maskImg = NSImage(size: rect.size)
-    maskImg.lockFocus()
-    svg.draw(in: NSRect(origin: .zero, size: rect.size))
-    maskImg.unlockFocus()
-    guard let ctx = NSGraphicsContext.current?.cgContext,
-          let mask = maskImg.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
-    ctx.clip(to: rect, mask: mask)
-    NSColor.white.setFill()
-    rect.fill()
-    ctx.resetClip()
-}
-
-/// 应用图标：圆角方块 + 品牌蓝渐变底 + 白色鲸鱼
+/// 应用图标：白色圆角底 + 黑色鲸鱼（参考官方 iOS 应用图标：白底、鲸鱼居中、留白均衡）
 func renderAppIcon(size: Int) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))
     image.lockFocus()
@@ -52,30 +38,25 @@ func renderAppIcon(size: Int) -> NSImage {
     guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
     let s = CGFloat(size)
 
-    let inset = s * 0.05
+    let inset = s * 0.045
     let rect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let corner = s * 0.22
+    let corner = s * 0.21
     ctx.addPath(CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil))
     ctx.clip()
 
-    // DeepSeek 品牌蓝 → 青 渐变
-    let colors = [
-        NSColor(calibratedRed: 0.20, green: 0.36, blue: 1.00, alpha: 1).cgColor,
-        NSColor(calibratedRed: 0.10, green: 0.72, blue: 0.92, alpha: 1).cgColor,
-    ] as CFArray
-    if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
-        ctx.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.maxY), end: CGPoint(x: rect.maxX, y: rect.minY), options: [])
-    }
+    // 纯白底（任意深浅 Dock 下都清晰，iOS 图标同款）
+    NSColor.white.setFill()
+    rect.fill()
 
-    // 白色鲸鱼（约占 62% 高度，居中）
-    let whaleSize = s * 0.62
+    // 黑色鲸鱼：居中，高度约占 58%，上下左右留白均衡（参考官方 iOS 图标比例）
+    let whaleSize = s * 0.58
     let whaleRect = NSRect(
         x: (s - whaleSize) / 2,
         y: (s - whaleSize) / 2,
         width: whaleSize,
         height: whaleSize
     )
-    drawWhiteWhale(in: whaleRect)
+    svg.draw(in: whaleRect)
 
     return image
 }

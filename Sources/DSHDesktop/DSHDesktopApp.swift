@@ -101,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenuPatched = true
         guard let menu = NSApp.windowsMenu else { return }
         if menu.items.contains(where: { $0.tag == 9001 }) { return }
+        Log.info("window menu 当前项: " + menu.items.map { $0.title }.joined(separator: " | "))
         menu.addItem(.separator())
         let center = NSMenuItem(title: "居中窗口", action: #selector(centerWindow(_:)), keyEquivalent: "")
         let left = NSMenuItem(title: "移到左侧半屏", action: #selector(moveWindowLeft(_:)), keyEquivalent: "")
@@ -109,6 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for item in [center, left, right, full] { item.tag = 9001 }
         [center, left, right, full].forEach { menu.addItem($0) }
         Log.info("window menu: 已补充窗口管理项")
+    }
+
+    /// NSMenuDelegate：窗口菜单每次打开前确保补充项在位
+    func menuWillOpen(_ menu: NSMenu) {
+        ensureWindowMenu()
     }
 
     private func mainWindow() -> NSWindow? {
@@ -142,9 +148,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow()?.toggleFullScreen(nil)
     }
 
-    /// 拦截非显式退出：Dock“退出”/Cmd+Q 不结束进程（后台常驻菜单栏）
+    /// 拦截非显式退出：Dock“退出”/Cmd+Q 隐藏窗口、保持后台驻留
+    /// （Gemini 式观感：看起来退出了，实际进程与菜单栏图标仍在，
+    ///   用菜单栏“显示主窗口”即可回来；只有菜单栏“退出”才真正结束）
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        quitRequested ? .terminateNow : .terminateCancel
+        if quitRequested { return .terminateNow }
+        DispatchQueue.main.async {
+            NSApp.hide(nil)
+            for window in NSApp.windows {
+                window.orderOut(nil)
+            }
+        }
+        return .terminateCancel
     }
 
     /// 关闭最后一个窗口时不退出（常驻菜单栏）

@@ -23,9 +23,15 @@ final class BridgeClient {
                 if let info = await fetchStatus(appState.url) {
                     if !appState.bridgeConnected { appState.bridgeConnected = true }
                     if appState.bridgeInfo != info { appState.bridgeInfo = info }
+                    if let stats = await fetchStats(appState.url) {
+                        if appState.stats != stats { appState.stats = stats }
+                    } else if appState.stats != nil {
+                        appState.stats = nil
+                    }
                 } else {
                     if appState.bridgeConnected { appState.bridgeConnected = false }
                     if !appState.bridgeInfo.isEmpty { appState.bridgeInfo = "" }
+                    if appState.stats != nil { appState.stats = nil }
                 }
                 try? await Task.sleep(for: .seconds(5))
             }
@@ -47,6 +53,30 @@ final class BridgeClient {
             return (response as? HTTPURLResponse)?.statusCode == 200
         } catch {
             return false
+        }
+    }
+
+    /// Token 用量统计（桥接插件 /api/desktop/stats）
+    private func fetchStats(_ base: URL) async -> TokenStats? {
+        var request = URLRequest(url: base.appendingPathComponent("api/desktop/stats"))
+        request.timeoutInterval = 2
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let usage = obj["usage"] as? [String: Any] else {
+                return nil
+            }
+            return TokenStats(
+                inputTokens: usage["inputTokens"] as? Int ?? 0,
+                uncachedInputTokens: usage["uncachedInputTokens"] as? Int ?? 0,
+                outputTokens: usage["outputTokens"] as? Int ?? 0,
+                cacheReadTokens: usage["cacheReadTokens"] as? Int ?? 0,
+                cacheWriteTokens: usage["cacheWriteTokens"] as? Int ?? 0,
+                scope: obj["scope"] as? String ?? ""
+            )
+        } catch {
+            return nil
         }
     }
 

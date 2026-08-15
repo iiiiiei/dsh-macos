@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var server: ServerManager
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
@@ -29,6 +30,8 @@ struct ContentView: View {
         }
         .frame(minWidth: 960, minHeight: 640)
         .onAppear {
+            // 注册“打开完整版”回调（面板与菜单栏使用）
+            WindowOpener.shared.openMain = { openWindow(id: "main") }
             bootstrap()
         }
         .onChange(of: appState.pageTitle) { newTitle in

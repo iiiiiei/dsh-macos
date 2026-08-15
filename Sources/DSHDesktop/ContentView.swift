@@ -4,13 +4,16 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var server: ServerManager
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
             switch server.status {
             case .running:
-                HarnessWebView(url: appState.url) { state in
+                HarnessWebView(url: appState.url, onSessionViewed: { sessionId in
+                    if appState.currentSessionId != sessionId {
+                        appState.currentSessionId = sessionId
+                    }
+                }) { state in
                     switch state {
                     case .loaded(let title):
                         appState.pageTitle = title
@@ -30,8 +33,6 @@ struct ContentView: View {
         }
         .frame(minWidth: 960, minHeight: 640)
         .onAppear {
-            // 注册“打开完整版”回调（面板与菜单栏使用）
-            WindowOpener.shared.openMain = { openWindow(id: "main") }
             bootstrap()
         }
         .onChange(of: appState.pageTitle) { newTitle in

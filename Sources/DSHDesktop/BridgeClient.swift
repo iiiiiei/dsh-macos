@@ -28,7 +28,7 @@ final class BridgeClient {
                     if !appState.bridgeInfo.isEmpty { appState.bridgeInfo = "" }
                 }
                 // Token 统计：直连 RPC，不依赖桥接插件激活
-                if let stats = await fetchStats(appState.url) {
+                if let stats = await fetchStats(appState.url, currentSessionId: appState.currentSessionId) {
                     if appState.stats != stats { appState.stats = stats }
                 } else if appState.stats != nil {
                     appState.stats = nil
@@ -57,11 +57,11 @@ final class BridgeClient {
     }
 
     /// Token 用量统计：直连 RPC session.list。
-    /// 口径对齐 DSH 官方 StatsLine（client-ui-conversation）：
-    ///   billedInput = uncached + cacheRead + cacheWrite
-    ///   cacheHit% = round(cacheRead / billedInput * 100)
-    ///   轮次/步骤来自 sessionStats 投影
-    private func fetchStats(_ base: URL) async -> TokenStats? {
+    /// 口径对齐 DSH 官方 StatsLine：billedInput = uncached + cacheRead + cacheWrite，
+    /// 缓存命中率 = round(cacheRead / billedInput * 100)。
+    /// 优先跟随 GUI 当前打开的会话（WebView fetch 钩子上报）；未知时退回最近活跃会话；
+    /// 无任何会话时显示今日聚合。
+    private func fetchStats(_ base: URL, currentSessionId: String?) async -> TokenStats? {
         var request = URLRequest(url: base.appendingPathComponent("api/session.list"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -83,75 +83,61 @@ final class BridgeClient {
                 return nil
             }
 
-            // 解析每个会话的投影数据
             struct Row {
+                var sessionId: String
                 var updatedAt: Int64
                 var blank: Bool
                 var usage: [String: Any]
-                var stats: [String: Any]
             }
             var rows: [Row] = []
             for item in items {
-                guard let projections = item["projections"] as? [String: Any],
-                      let values = projections["values"] as? [String: Any] else { continue }
-                let usage = (values["tokenUsage"] as? [String: Any]) ?? [:]
-                let stats = (values["sessionStats"] as? [String: Any]) ?? [:]
-                guard !usage.isEmpty || !stats.isEmpty else { continue }
+                guard let sessionId = item["sessionId"] as? String,
+                      let projections = item["projections"] as? [String: Any],
+                      let values = projections["values"] as? [String: Any],
+                      let usage = values["tokenUsage"] as? [String: Any] else { continue }
                 rows.append(Row(
+                    sessionId: sessionId,
                     updatedAt: (item["updatedAt"] as? NSNumber)?.int64Value ?? 0,
                     blank: item["blank"] as? Bool ?? true,
-                    usage: usage,
-                    stats: stats
+                    usage: usage
                 ))
             }
             guard !rows.isEmpty else { return nil }
 
-            // 有非空会话 → 最近活跃会话的数据；否则今日所有会话聚合
-            let active = rows.filter { !$0.blank }.max { $0.updatedAt < $1.updatedAt }
-            let startOfToday = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
-
-            let usage: [String: Any]
-            let stats: [String: Any]
-            let scope: String
-            if let active {
-                usage = active.usage
-                stats = active.stats
-                scope = "当前会话"
-            } else {
-                var usageTotals: [String: Int] = [:]
-                var turnTotal = 0, stepTotal = 0
-                for row in rows where row.updatedAt >= startOfToday {
-                    for key in ["uncachedInputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] {
-                        usageTotals[key, default: 0] += (row.usage[key] as? NSNumber)?.intValue ?? 0
-                    }
-                    turnTotal += (row.stats["turns"] as? NSNumber)?.intValue ?? 0
-                    stepTotal += (row.stats["steps"] as? NSNumber)?.intValue ?? 0
-                }
-                usage = usageTotals
-                stats = ["turns": turnTotal, "steps": stepTotal]
-                scope = "今日总计"
+            // 1) GUI 当前打开的会话（精确跟随）
+            if let current = currentSessionId,
+               let row = rows.first(where: { $0.sessionId == current }) {
+                return makeStats(row.usage)
             }
-
-            // 官方口径换算
-            let uncached = (usage["uncachedInputTokens"] as? NSNumber)?.intValue ?? 0
-            let cacheRead = (usage["cacheReadTokens"] as? NSNumber)?.intValue ?? 0
-            let cacheWrite = (usage["cacheWriteTokens"] as? NSNumber)?.intValue ?? 0
-            let output = (usage["outputTokens"] as? NSNumber)?.intValue ?? 0
-            let billed = uncached + cacheRead + cacheWrite
-            let hitPercent = billed == 0 ? nil : Int((Double(cacheRead) / Double(billed) * 100).rounded())
-
-            return TokenStats(
-                billedInputTokens: billed,
-                outputTokens: output,
-                cacheHitPercent: hitPercent,
-                turns: (stats["turns"] as? NSNumber)?.intValue ?? 0,
-                steps: (stats["steps"] as? NSNumber)?.intValue ?? 0,
-                scope: scope
-            )
+            // 2) 最近活跃的非空会话
+            if let active = rows.filter({ !$0.blank }).max(by: { $0.updatedAt < $1.updatedAt }) {
+                return makeStats(active.usage)
+            }
+            // 3) 今日聚合
+            let startOfToday = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
+            var totals: [String: Int] = [:]
+            for row in rows where row.updatedAt >= startOfToday {
+                for key in ["uncachedInputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] {
+                    totals[key, default: 0] += (row.usage[key] as? NSNumber)?.intValue ?? 0
+                }
+            }
+            return makeStats(totals)
         } catch {
             return nil
         }
     }
+
+    /// 官方口径换算
+    private func makeStats(_ usage: [String: Any]) -> TokenStats {
+        let uncached = (usage["uncachedInputTokens"] as? NSNumber)?.intValue ?? 0
+        let cacheRead = (usage["cacheReadTokens"] as? NSNumber)?.intValue ?? 0
+        let cacheWrite = (usage["cacheWriteTokens"] as? NSNumber)?.intValue ?? 0
+        let output = (usage["outputTokens"] as? NSNumber)?.intValue ?? 0
+        let billed = uncached + cacheRead + cacheWrite
+        let hit = billed == 0 ? nil : Int((Double(cacheRead) / Double(billed) * 100).rounded())
+        return TokenStats(billedInputTokens: billed, outputTokens: output, cacheHitPercent: hit)
+    }
+
 
     private func fetchStatus(_ base: URL) async -> String? {
         var request = URLRequest(url: base.appendingPathComponent("api/desktop/status"))

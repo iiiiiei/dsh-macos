@@ -1,13 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// 菜单栏（原生下拉菜单）：状态 + token 统计 + 操作项
+/// 菜单栏（macOS 原生下拉菜单）：状态 + token 统计（纯文本）+ 操作项
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var server: ServerManager
-    @Environment(\.openWindow) private var openWindow
-    /// 打开迷你对话（由 App 层注入，避免环境依赖）
-    var onOpenMiniChat: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -22,25 +19,16 @@ struct MenuBarView: View {
             }
             .padding(.vertical, 4)
 
-            // Token 统计行（对齐官方 StatsLine 口径）
+            // Token 统计（纯文本，对齐官方 StatsLine 口径）
             if let stats = appState.stats {
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.fill")
-                        .font(.caption)
-                    Text(statsLine(stats))
-                        .font(.caption)
-                        .monospacedDigit()
-                }
-                .padding(.bottom, 4)
+                Text(statsLine(stats))
+                    .font(.caption)
+                    .monospacedDigit()
+                    .padding(.bottom, 4)
             }
 
             Divider()
 
-            Button("迷你对话…") { onOpenMiniChat() }
-            Button("打开主窗口") {
-                openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
-            }
             Button("在浏览器中打开") {
                 NSWorkspace.shared.open(appState.url)
             }
@@ -85,22 +73,17 @@ struct MenuBarView: View {
         .padding(.vertical, 6)
     }
 
-    /// 官方 StatsLine 风格：`N turns · M steps | 输入 x · 输出 y | 缓存命中 z%`
+    /// 纯文本一行：`输入 6.2k · 输出 117 · 缓存命中 99%`
     private func statsLine(_ stats: TokenStats) -> String {
         var parts: [String] = []
-        if stats.turns > 0 || stats.steps > 0 {
-            parts.append("\(stats.turns) turns · \(stats.steps) steps")
-        }
         if stats.billedInputTokens > 0 || stats.outputTokens > 0 {
-            var line = "输入 \(formatTokens(stats.billedInputTokens)) · 输出 \(formatTokens(stats.outputTokens))"
+            parts.append("输入 \(formatTokens(stats.billedInputTokens))")
+            parts.append("输出 \(formatTokens(stats.outputTokens))")
             if let hit = stats.cacheHitPercent {
-                line += " · 缓存命中 \(hit)%"
+                parts.append("缓存命中 \(hit)%")
             }
-            parts.append(line)
         }
-        if parts.isEmpty { return "暂无用量数据" }
-        if stats.scope.isEmpty { return parts.joined(separator: " | ") }
-        return "\(stats.scope)：\(parts.joined(separator: " | "))"
+        return parts.isEmpty ? "暂无用量数据" : parts.joined(separator: " · ")
     }
 
     private func formatTokens(_ n: Int) -> String {
@@ -128,4 +111,8 @@ struct MenuBarView: View {
         process.arguments = ["-e", script]
         try? process.run()
     }
+}
+
+extension Notification.Name {
+    static let dshReloadRequested = Notification.Name("dshReloadRequested")
 }

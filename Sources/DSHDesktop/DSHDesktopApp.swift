@@ -28,11 +28,9 @@ struct DSHDesktopApp: App {
             }
         }
 
-        // 原生菜单栏（和第一版一致）：状态 + token 统计 + 操作
+        // 原生菜单栏：状态 + token 统计 + 操作
         MenuBarExtra {
-            MenuBarView(appState: appState, server: server) {
-                appDelegate.miniChatController?.open()
-            }
+            MenuBarView(appState: appState, server: server)
         } label: {
             Image(systemName: server.status == .running ? "bolt.shield.fill" : "bolt.shield")
         }
@@ -45,15 +43,11 @@ struct DSHDesktopApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var miniChatController: MiniChatController?
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("applicationDidFinishLaunching")
         // 从终端直接运行二进制时也需要常规 Dock 应用行为
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-
-        miniChatController = MiniChatController(appState: .shared, server: .shared)
 
         if CommandLine.arguments.contains("--selftest") {
             Task { @MainActor in

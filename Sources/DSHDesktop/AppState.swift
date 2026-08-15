@@ -6,9 +6,6 @@ struct TokenStats: Equatable {
     var billedInputTokens: Int = 0     // 计费输入 = uncached + cacheRead + cacheWrite
     var outputTokens: Int = 0          // 输出
     var cacheHitPercent: Int?          // 缓存命中率 = round(cacheRead / billedInput * 100)
-    var turns: Int = 0                 // 会话轮次（sessionStats）
-    var steps: Int = 0                 // 步骤数（sessionStats）
-    var scope: String = ""             // "当前会话" / "今日总计"
 }
 
 /// DSH 服务器状态
@@ -48,6 +45,8 @@ final class AppState: ObservableObject {
     @Published var bridgeConnected: Bool = false
     @Published var bridgeInfo: String = ""
     @Published var stats: TokenStats?
+    /// GUI 当前打开的会话（WebView fetch 钩子上报）；nil = 未知，退回最近活跃
+    @Published var currentSessionId: String?
 
     // MARK: - 设置（UserDefaults 持久化）
 

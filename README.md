@@ -13,9 +13,9 @@
   - 启动时检测端口：已有实例 → attach（不干扰现有服务器）；无实例 → 自动冷启动
   - 健康轮询：启动阶段 0.5s 加密探测，运行后 5s 慢轮询；服务器挂掉自动提示
   - 退出策略：应用自己启动的服务器默认随应用退出（可配置保持运行）
-- **菜单栏常驻**（⚡🛡）：点击弹出**迷你浮动面板**（Gemini 式，可拖动）——状态指示（绿/黄/红）、**token 用量统计**、**迷你输入框**（新建会话直接发消息）、打开完整版、前往开放平台、测试通知；右键图标弹出完整菜单（打开主窗口/浏览器/刷新/启停服务器/开放平台/退出）
-- **迷你输入框**：不打开窗口即可给 DSH 发消息（自动新建会话，回复后台生成，可长按面板查看）
-- **Token 用量统计**：有活跃会话显示当前会话的输入/输出/缓存命中/未命中；无会话显示今日全部会话聚合（直连 DSH RPC，无需插件激活）
+- **菜单栏常驻**（⚡🛡，macOS 原生菜单）：状态指示（绿/黄/红）、**token 用量统计行**（官方口径）、迷你对话、打开主窗口、浏览器打开、刷新、启动/停止服务器、测试通知、前往开放平台、退出
+- **迷你对话窗口**：菜单"迷你对话…"打开一个 dsh 风格的迷你输入框——**DSH 未运行时点击会自动在后台拉起服务器**，输入即发（自动新建会话），回复显示在窗口内
+- **Token 用量统计**：口径与 DSH 官方 StatsLine 完全一致（`billedInput = uncached + cacheRead + cacheWrite`、缓存命中率 = cacheRead/billed、轮次/步骤来自 sessionStats）；有活跃会话显示当前会话，无会话显示今日聚合（直连 DSH RPC，无需插件激活）
 - **设置**：端口、启动命令、自动启动服务器、退出时保持服务器、开机自启（SMAppService）；设置入口在应用菜单（Cmd+,），菜单栏不重复放
 - **桌面桥接插件**（dsh-desktop-bridge）：`/api/desktop/status` + `/api/desktop/notify`（+ `/api/desktop/stats`），桌面集成本身就是一个 DSH 插件
 - **自测模式**：`--selftest` 端到端验证，CI 可用
@@ -34,9 +34,10 @@
 
 ```text
 ┌─────────────────────────────────────────────────────────┐
-│ UI 层（SwiftUI + AppKit）                                │
+│ UI 层（SwiftUI）                                         │
 │   WindowGroup 主窗口（状态面板 ⇄ WebView）               │
-│   NSStatusItem 菜单栏 ⚡🛡 + 迷你浮动面板（NSPanel）       │
+│   MenuBarExtra 原生菜单栏 ⚡🛡（状态 + 统计 + 操作）       │
+│   迷你对话窗口（NSPanel，dsh 风格输入框）                 │
 │   Settings 设置窗口（Cmd+,）                             │
 ├─────────────────────────────────────────────────────────┤
 │ Web 层（WebKit）                                         │
@@ -85,12 +86,13 @@ dsh-macos/
 ├── Package.swift                  # SPM 清单（IDE 友好；实际构建走 scripts/build.sh）
 ├── Resources/Info.plist           # 应用 bundle 配置
 ├── Sources/DSHDesktop/
-│   ├── DSHDesktopApp.swift        # @main：WindowGroup + NSStatusItem/菜单 + Settings + AppDelegate
+│   ├── DSHDesktopApp.swift        # @main：WindowGroup + MenuBarExtra + Settings + AppDelegate
 │   ├── AppState.swift             # 设置（UserDefaults）+ 页面/桥接状态（@Published）
 │   ├── ServerManager.swift        # 服务器进程：attach/解析/启动/轮询/停止
 │   ├── WebView.swift              # WKWebView 封装（导航/弹窗/权限/刷新）
 │   ├── ContentView.swift          # 状态面板 ⇄ Web GUI 切换 + 引导流程
-│   ├── MiniPanel.swift            # 迷你浮动面板（NSPanel + 面板视图）
+│   ├── MiniPanel.swift            # 迷你对话窗口（MiniChatController + 输入框视图）
+│   ├── MenuBarView.swift          # 原生菜单栏内容（状态/统计/操作）
 │   ├── ChatClient.swift           # 迷你输入：RPC 发消息（create/prompt/history）
 │   ├── SettingsView.swift         # 设置窗口（含开机自启 SMAppService）
 │   ├── BridgeClient.swift         # 与 dsh-desktop-bridge 插件通信
@@ -127,7 +129,7 @@ Command Line Tools）；CLT 正常后 overlay 仍会生成但无副作用。
 
 1. **安装**：把 `build/DSH Desktop.app` 复制到 `/Applications/`（启动台才能识别）
 2. **启动**：双击或 Launchpad 打开。首次会看到服务器状态面板（"正在冷启动 DSH 服务器（首次约需数秒）…"），就绪后自动切换为 Web GUI
-3. **菜单栏**（⚡🛡）：**左键点击**弹出迷你浮动面板（状态 + token 统计 + 输入框 + 按钮，可拖动），**右键点击**弹出完整菜单；关闭窗口不退出应用（菜单栏常驻），Cmd+Q 退出
+3. **菜单栏**（⚡🛡，原生下拉菜单）：状态 + token 统计 + 全部操作；"迷你对话…"弹出迷你输入框（DSH 未运行时自动后台启动）；关闭窗口不退出应用（菜单栏常驻），Cmd+Q 退出
 
 ### 设置项
 

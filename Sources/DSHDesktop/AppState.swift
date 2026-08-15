@@ -1,14 +1,14 @@
 import Foundation
 import Combine
 
-/// Token 用量统计（来自桥接插件 /api/desktop/stats）
+/// Token 用量统计（对齐 DSH 官方 StatsLine 口径，见 client-ui-conversation）
 struct TokenStats: Equatable {
-    var inputTokens: Int = 0          // 本次请求输入（不含缓存命中部分）
-    var uncachedInputTokens: Int = 0  // 缓存未命中输入
-    var outputTokens: Int = 0         // 输出
-    var cacheReadTokens: Int = 0      // 缓存命中输入
-    var cacheWriteTokens: Int = 0     // 缓存写入
-    var scope: String = ""            // "当前会话" / "今日总计"
+    var billedInputTokens: Int = 0     // 计费输入 = uncached + cacheRead + cacheWrite
+    var outputTokens: Int = 0          // 输出
+    var cacheHitPercent: Int?          // 缓存命中率 = round(cacheRead / billedInput * 100)
+    var turns: Int = 0                 // 会话轮次（sessionStats）
+    var steps: Int = 0                 // 步骤数（sessionStats）
+    var scope: String = ""             // "当前会话" / "今日总计"
 }
 
 /// DSH 服务器状态

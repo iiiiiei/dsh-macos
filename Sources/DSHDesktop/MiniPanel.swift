@@ -1,161 +1,131 @@
 import SwiftUI
 import AppKit
 
-/// 供面板在任意场景中打开主窗口的桥（SwiftUI 的 openWindow 环境只在场景内可用）
+/// 供菜单栏/迷你窗口在任意场景中打开主窗口的桥（SwiftUI 的 openWindow 环境只在场景内可用）
 @MainActor
 final class WindowOpener {
     static let shared = WindowOpener()
     var openMain: (() -> Void)?
 }
 
-/// 迷你浮动面板：类似 Gemini 的弹出式面板，可拖动到任意位置
+/// 迷你对话窗口：一个 dsh 风格的迷你输入框。
+/// 从菜单栏"迷你对话…"打开；DSH 未运行时打开会自动在后台拉起服务器。
 @MainActor
-final class MiniPanelController {
-    private var panel: MiniPanel?
+final class MiniChatController {
+    private var panel: MiniChatPanel?
     private let appState: AppState
     private let server: ServerManager
-    private let statusItem: NSStatusItem
 
-    init(appState: AppState, server: ServerManager, statusItem: NSStatusItem) {
+    init(appState: AppState, server: ServerManager) {
         self.appState = appState
         self.server = server
-        self.statusItem = statusItem
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
-    func toggle() {
-        isVisible ? hide() : show()
-    }
-
-    func show() {
-        let panel: MiniPanel
-        if let existing = self.panel {
-            panel = existing
-        } else {
-            panel = MiniPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 360, height: 480),
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            panel.isMovableByWindowBackground = true
-            panel.level = .statusBar
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            panel.hidesOnDeactivate = false
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = true
-            panel.contentView = NSHostingView(rootView: MiniPanelView(appState: appState, server: server))
-            self.panel = panel
+    /// 打开迷你对话：dsh 未运行则先后台启动
+    func open() {
+        if let panel {
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
         }
-
-        // 定位到菜单栏图标下方
-        if let button = statusItem.button, let window = button.window {
-            let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
-            let x = buttonFrame.midX - panel.frame.width / 2
-            let y = buttonFrame.minY - panel.frame.height - 8
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
-        }
+        let panel = MiniChatPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 220),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "DSH Desktop — 迷你对话"
+        panel.isReleasedWhenClosed = false
+        panel.contentView = NSHostingView(rootView: MiniChatView(appState: appState, server: server))
+        self.panel = panel
+        panel.center()
         panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        // dsh 未运行：后台拉起（不打断输入框使用）
+        switch server.status {
+        case .stopped, .unknown, .error:
+            server.start()
+        default:
+            break
+        }
     }
 
-    func hide() {
-        panel?.orderOut(nil)
+    func close() {
+        panel?.close()
     }
 }
 
-/// 可接收键盘焦点的无边框面板（否则 TextField 无法输入）
-final class MiniPanel: NSPanel {
+/// 可接收键盘焦点的面板
+final class MiniChatPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
 
-/// 面板内容
-struct MiniPanelView: View {
+/// dsh 风格的迷你输入框：输入 → 新建会话发送 → 窗口内显示回复
+struct MiniChatView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var server: ServerManager
     @State private var message = ""
-    @State private var sendFeedback: String?
+    @State private var sending = false
+    @State private var reply: String?
+    @State private var feedback: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // 标题行
-            HStack(spacing: 6) {
-                Image(systemName: "bolt.shield.fill")
-                    .foregroundStyle(.blue)
-                Text("DSH Desktop")
-                    .fontWeight(.semibold)
-                Spacer()
-                Button("打开完整版") { openFullVersion() }
-                    .controlSize(.small)
-                Button {
-                    NotificationCenter.default.post(name: .dshClosePanelRequested, object: nil)
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            // 状态区
+            // 服务器状态行（未运行时提示自动启动）
             HStack(spacing: 6) {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
-                Text(server.status.label)
-                    .fontWeight(.medium)
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Spacer()
-                if server.status == .running {
-                    Button("停止") { server.stop() }
-                        .controlSize(.small)
-                }
             }
 
-            // Token 统计（数据来自桥接插件 /api/desktop/stats）
-            if let stats = appState.stats {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(stats.scope)
+            // 回复区（发送后显示）
+            if sending {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("正在生成回复…")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    HStack(spacing: 10) {
-                        statItem("输入", formatTokens(stats.inputTokens), stats.cacheReadTokens > 0 ? "缓存命中 \(formatTokens(stats.cacheReadTokens))" : nil)
-                        statItem("输出", formatTokens(stats.outputTokens), nil)
-                        statItem("缓存未命中", formatTokens(stats.uncachedInputTokens), nil)
-                    }
                 }
-                .font(.caption)
+            } else if let reply {
+                ScrollView {
+                    Text(reply)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 110)
+                if let feedback {
+                    Text(feedback)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            Divider()
-
-            // 迷你输入：总是新建会话并发送
-            TextField("给 DSH 发消息（将新建会话）…", text: $message)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { send() }
-
-            if let sendFeedback {
-                Text(sendFeedback)
-                    .font(.caption)
-                    .foregroundStyle(sendFeedback.hasPrefix("✅") ? .green : .red)
-            }
-
-            HStack {
-                Button("发送", action: send)
-                    .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Spacer()
-                Button("前往开放平台") {
-                    NSWorkspace.shared.open(URL(string: "https://platform.deepseek.com/")!)
+            // dsh 风格的输入框 + 发送
+            HStack(spacing: 8) {
+                TextField("发消息给 DSH…", text: $message)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { send() }
+                Button {
+                    send()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
                 }
-                .controlSize(.small)
-                Button("测试通知") { sendTestNotification() }
-                    .controlSize(.small)
+                .buttonStyle(.plain)
+                .disabled(sending || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.separator, lineWidth: 1))
-        .shadow(radius: 12, y: 4)
     }
 
     private var statusColor: Color {
@@ -167,62 +137,52 @@ struct MiniPanelView: View {
         }
     }
 
-    private func statItem(_ title: String, _ value: String, _ sub: String?) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(title)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .fontWeight(.medium)
-                .monospacedDigit()
-            if let sub {
-                Text(sub)
-                    .foregroundStyle(.tertiary)
-            }
+    private var statusText: String {
+        switch server.status {
+        case .running: return "DSH 运行中 · 消息将新建会话"
+        case .starting: return "正在后台启动 DSH 服务器…"
+        case .error(let msg): return "服务器错误：\(msg)"
+        case .stopped, .unknown: return "DSH 未运行，发送时将自动启动"
         }
-    }
-
-    private func formatTokens(_ n: Int) -> String {
-        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
-        if n >= 1_000 { return String(format: "%.1fk", Double(n) / 1_000) }
-        return "\(n)"
-    }
-
-    private func openFullVersion() {
-        if let open = WindowOpener.shared.openMain {
-            open()
-        }
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func send() {
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        sendFeedback = nil
+        guard !text.isEmpty, !sending else { return }
+        sending = true
+        reply = nil
+        feedback = nil
         Task { @MainActor in
-            do {
-                let reply = try await ChatClient.shared.sendNewSession(text, appState: appState)
-                sendFeedback = "✅ 已发送并新建会话"
-                Log.info("chat: 发送成功，回复 \(reply.prefix(80))")
-            } catch {
-                sendFeedback = "❌ 发送失败：\(error.localizedDescription)"
-                Log.info("chat: 发送失败 \(error.localizedDescription)")
+            // 服务器未就绪：等待后台启动完成（最多 30s）
+            let ready = await ensureServerReady()
+            guard ready else {
+                sending = false
+                feedback = "服务器启动失败，请检查设置"
+                return
             }
+            do {
+                let response = try await ChatClient.shared.sendNewSession(text, appState: appState)
+                reply = response
+                message = ""
+            } catch {
+                feedback = "发送失败：\(error.localizedDescription)"
+            }
+            sending = false
         }
     }
 
-    private func sendTestNotification() {
-        Task { @MainActor in
-            let ok = await BridgeClient.shared.notify(
-                title: "DSH Desktop",
-                message: "来自 dsh-desktop-bridge 插件的原生通知 ✅",
-                appState: appState
-            )
-            sendFeedback = ok ? "✅ 通知已触发（右上角查看）" : "❌ 桥接插件未激活：需要重启 DSH 服务器（见 README）"
+    /// 等待服务器就绪（未运行时由 MiniChatController 触发启动）
+    private func ensureServerReady() async -> Bool {
+        guard server.status != .running else { return true }
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            if server.status == .running { return true }
+            try? await Task.sleep(for: .milliseconds(500))
         }
+        return server.status == .running
     }
 }
 
 extension Notification.Name {
-    static let dshClosePanelRequested = Notification.Name("dshClosePanelRequested")
     static let dshReloadRequested = Notification.Name("dshReloadRequested")
 }

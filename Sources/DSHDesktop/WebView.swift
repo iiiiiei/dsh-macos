@@ -230,6 +230,10 @@ struct HarnessWebView: NSViewRepresentable {
             webView.evaluateJavaScript(js) { result, _ in
                 Log.info("sidebar probe: \(result ?? "?")")
             }
+            // 黄灯（miniaturize）按钮 frame（图标对齐锚点）
+            if let window = webView.window, let mini = window.standardWindowButton(.miniaturizeButton) {
+                Log.info("traffic mini: frame=\(mini.frame)")
+            }
             // 展开态：主内容容器 + 会话选中项（aria-selected / active / selected）
             let expanded = """
             (function () {
@@ -254,6 +258,36 @@ struct HarnessWebView: NSViewRepresentable {
                 }
               }
               if (active) out.active = active;
+              // 顶栏最高元素（session log 按钮等）注入 overlay 后的实际 top
+              var btns = document.querySelectorAll('button');
+              var tops = [];
+              for (var b = 0; b < btns.length; b++) {
+                var br = btns[b].getBoundingClientRect();
+                if (br.top >= 0 && br.top < 120 && br.left > 200) {
+                  tops.push({ cls: String(btns[b].className).slice(0, 50), t: Math.round(br.top), aria: (btns[b].getAttribute('aria-label') || '').slice(0, 30) });
+                }
+              }
+              if (tops.length) out.topButtons = tops.slice(0, 6);
+              // 选中框/悬停框 computedStyle（宽度机制）
+              var rows = document.querySelectorAll('.YDXeBa_sessionRow');
+              var rowInfo = [];
+              for (var r2 = 0; r2 < Math.min(rows.length, 3); r2++) {
+                var cs2 = getComputedStyle(rows[r2]);
+                var rr2 = rows[r2].getBoundingClientRect();
+                rowInfo.push({ cls: String(rows[r2].className).slice(0, 80), w: Math.round(rr2.width), l: Math.round(rr2.left), r: Math.round(rr2.right), ml: cs2.marginLeft, mr: cs2.marginRight, pl: cs2.paddingLeft, pr: cs2.paddingRight, box: cs2.boxSizing });
+              }
+              if (rowInfo.length) out.rows = rowInfo;
+              // 选中框父级与 logoRow 几何（宽度差异根因）
+              var row0 = rows[0];
+              if (row0 && row0.parentElement) {
+                var pr = row0.parentElement.getBoundingClientRect();
+                out.rowParent = { cls: String(row0.parentElement.className).slice(0, 60), l: Math.round(pr.left), r: Math.round(pr.right), w: Math.round(pr.width) };
+              }
+              var logoRow = document.querySelector('.hHd-Xa_logoRow');
+              if (logoRow) {
+                var lr2 = logoRow.getBoundingClientRect();
+                out.logoRow = { l: Math.round(lr2.left), r: Math.round(lr2.right), w: Math.round(lr2.width) };
+              }
               return JSON.stringify(out);
             })();
             """

@@ -57,8 +57,8 @@ fi
 
 LOGO=$(grep -oE 'marginTop=[0-9]+px' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+')
 if [ -n "$LOGO" ] && [ "$LOGO" -ge 24 ] && [ "$LOGO" -le 34 ] \
-   && [ -n "$PADTOP" ] && [ "$PADTOP" -ge 24 ]; then
-  check controls_below_traffic_lights_no_overlap 1 "logo 行 margin-top=$LOGO px + 主内容 padding-top=$PADTOP px（均在红绿灯行下方，不重叠）"
+   && [ -n "$PADTOP" ] && [ "$PADTOP" -ge 12 ] && [ "$PADTOP" -le 22 ]; then
+  check controls_below_traffic_lights_no_overlap 1 "logo 行 margin-top=$LOGO px（红绿灯行下方）+ 主内容 padding-top=$PADTOP px（=行高28−顶栏间距12，内容贴拖拽带下限）"
 else
   check controls_below_traffic_lights_no_overlap 0 "实测 logo=$LOGO padTop=${PADTOP:-?}（异常）"
 fi
@@ -67,21 +67,32 @@ fi
 DSW=$(grep -oE 'drag strip: x=[0-9]+ w=[0-9]+ h=[0-9]+' "$PROBE_LOG" | tail -1 | sed -E 's/.*w=([0-9]+) h=([0-9]+)/\1 \2/')
 DS_X=$(echo "$DSW" | awk '{print $1}'); DS_H=$(echo "$DSW" | awk '{print $2}')
 WW=$(grep -oE 'window: frame=[0-9]+' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+$')
-if [ "$DS_X" -ge 1400 ] && [ "$DS_H" = "32" ] 2>/dev/null; then
-  check drag_strip_~32_right_of_traffic_lights 1 "拖拽带为红绿灯水平行整行：全宽 x=0 w=$DS_X h=$DS_H，轴线在行内"
+if [ "$DS_X" -ge 1400 ] && [ "$DS_H" -ge 26 ] && [ "$DS_H" -le 30 ] 2>/dev/null; then
+  check drag_strip_~32_right_of_traffic_lights 1 "拖拽带为红绿灯水平行整行：全宽 x=0 w=$DS_X h=$DS_H（行高由红绿灯组件反推 28），轴线在行内"
 else
   if [ -n "$DS_X" ]; then
-    check drag_strip_~32_right_of_traffic_lights 0 "实测拖拽带 w=$DS_X h=$DS_H（非全行 32）"
+    check drag_strip_~32_right_of_traffic_lights 0 "实测拖拽带 w=$DS_X h=$DS_H（异常）"
   else
     check drag_strip_~32_right_of_traffic_lights 0 "needs_manual: 无 GUI 环境无法建窗；请拖动窗口顶部红绿灯水平行确认可拖"
   fi
 fi
 
-# 4. 顶栏按钮可点击：主内容已让出标题栏行（padding 生效 → 顶栏下移不遮挡）
-if [ -n "$PADTOP" ] && [ "$PADTOP" -ge 24 ]; then
-  check header_buttons_clickable 1 "主内容 padding-top=$PADTOP px（透明标题栏布局），顶栏按钮下移不被拖拽带遮挡"
+# 4. 顶栏按钮可点击：session log 按钮上边框贴紧拖拽带下限（不遮挡）
+SLOG=$(grep -oE '"cls":"nL4_yW_sessionLogButton","t":[0-9]+' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+$')
+DSH_H=$(grep -oE 'drag strip: x=0 w=[0-9]+ h=[0-9]+' "$PROBE_LOG" | tail -1 | grep -oE 'h=[0-9]+' | grep -oE '[0-9]+')
+if [ -n "$SLOG" ] && [ -n "$DSH_H" ] && [ "$SLOG" -ge "$((DSH_H - 2))" ] && [ "$SLOG" -le "$((DSH_H + 2))" ]; then
+  check header_buttons_clickable 1 "session log 按钮顶 t=$SLOG ≈ 拖拽带下限 $DSH_H（贴紧不遮挡）"
 else
-  check header_buttons_clickable 0 "needs_manual: 请点击主内容顶栏按钮（模型选择/会话标题）确认可点"
+  check header_buttons_clickable 0 "needs_manual: session log 按钮顶=${SLOG:-?} vs 拖拽带高=${DSH_H:-?}（请点击顶栏按钮确认可点）"
+fi
+
+# 2b. 选中框与按钮同宽同缘（弹性居中）
+ROWW=$(grep -oE '"cls":"YDXeBa_sessionRow YDXeBa_selected","w":[0-9]+,"l":[0-9]+,"r":[0-9]+' "$PROBE_LOG" | tail -1 | sed -E 's/.*"w":([0-9]+),"l":([0-9]+),"r":([0-9]+)/\1 \2 \3/')
+RW=$(echo "$ROWW" | awk '{print $1}'); RL=$(echo "$ROWW" | awk '{print $2}'); RR=$(echo "$ROWW" | awk '{print $3}')
+if [ "$RW" = "216" ] && [ "$RL" = "32" ] && [ "$RR" = "248" ]; then
+  check session_row_aligned 1 "选中框 w=$RW l=$RL r=$RR（与新会话按钮 216/32/248 一致，中心 140 居中）"
+else
+  check session_row_aligned 0 "实测选中框 w=$RW l=$RL r=$RR（应与 216/32/248 一致）"
 fi
 rm -f "$PROBE_LOG"
 

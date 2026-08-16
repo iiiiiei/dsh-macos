@@ -205,23 +205,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         layoutDragStrip(window)
     }
 
-    /// 拖拽带：红绿灯水平行整行（全宽），红绿灯轴线在行内垂直居中。
-    /// 行高 32pt（对齐方案1），行上下边距相等 → 轴线居中。
+    /// 拖拽带：红绿灯水平行整行（全宽），行高由红绿灯组件位置反推——
+    /// 行高 = 按钮上边距 × 2 + 按钮高（按钮在行内垂直居中，轴线与行中心重合）。
+    /// 行高单一来源 = contentLayoutRect 差值（与注入的 --dsh-traffic-inset 一致）。
     private func layoutDragStrip(_ window: NSWindow) {
         guard let strip = dragStrip, let contentView = window.contentView else { return }
         guard let close = window.standardWindowButton(.closeButton) else { return }
-        // 红绿灯轴线距窗口顶（按钮 frame 为 flipped 坐标系，midY 即距顶）
+        // 红绿灯组件垂直范围（flipped 坐标：minY 即距顶）
+        let rowHeight = max(DesktopLayout.trafficLightRowHeight,
+                            window.frame.height - window.contentLayoutRect.height)
         let axisFromTop = close.frame.midY
-        // 轴线尽量居中于拖拽带；拖拽带夹取在窗口可视范围内
-        let stripTopFromTop = max(0, axisFromTop - DesktopLayout.dragStripHeight / 2)
-        let y = window.frame.height - stripTopFromTop - DesktopLayout.dragStripHeight
+        // 轴线在行内垂直居中；行夹取在窗口可视范围内
+        let stripTopFromTop = max(0, axisFromTop - rowHeight / 2)
+        let y = window.frame.height - stripTopFromTop - rowHeight
         strip.frame = NSRect(
             x: 0,
             y: y,
             width: contentView.bounds.width,
-            height: DesktopLayout.dragStripHeight
+            height: rowHeight
         )
-        Log.info("drag strip: x=\(Int(strip.frame.minX)) w=\(Int(strip.frame.width)) h=\(Int(strip.frame.height)) axisFromTop=\(Int(axisFromTop))")
+        Log.info("drag strip: x=\(Int(strip.frame.minX)) w=\(Int(strip.frame.width)) h=\(Int(strip.frame.height)) axisFromTop=\(Int(axisFromTop)) rowHeight=\(Int(rowHeight))")
     }
 
     private func mainWindow() -> NSWindow? {

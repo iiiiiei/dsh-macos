@@ -24,10 +24,17 @@
     // 折叠态：去掉 railIn 左右 10px 内缩，图标列右缘与侧栏右缘合一（视觉连贯），
     // 红绿灯组（左缘 7 ~ 右缘 61）在侧栏 68px 内严格居中（左 7 / 右 7）
     ".pI_x6G_sidebarCol:has(.hHd-Xa_collapsed) .hHd-Xa_railIn { padding-left: 0 !important; padding-right: 0 !important; }",
-    // 主内容区让出透明标题栏行（拖拽带高度）
-    ".pI_x6P_centerCol, .pI_x6G_centerCol { padding-top: var(--dsh-traffic-inset, 28px) !important; }",
-    // 会话选中框右对齐（与 logo 行内容右缘一致，侧栏 280 - 左右 12 = 256）
-    ".YDXeBa_sessionRow.YDXeBa_selected { box-sizing: border-box !important; width: 256px !important; }",
+    // 主内容区让出透明标题栏行：padding = 拖拽带行高 - 顶栏固有间距 12px，
+    // 使顶栏最高元素（session log 按钮）上边框贴紧拖拽带下限
+    ".pI_x6P_centerCol, .pI_x6G_centerCol { padding-top: calc(var(--dsh-traffic-inset, 28px) - 12px) !important; }",
+    // 会话选中框/悬停框：弹性宽度（随侧栏宽变化）+ 水平居中，
+    // 左右边距 = 新会话按钮边距 20px（按钮 216 在 logoRow 256 内居中）。
+    // 源码依据：.YDXeBa_sessionRow 无左右 margin（高亮框贴满内容区 256px），
+    // 与按钮 216px 宽度不一致，这里用边距对齐按钮
+    // 选中框父级(_root_1b2ny_3)右缘 276 比 logoRow 右缘 268 宽 8px（DSH 布局差异），
+    // 右 margin 28 = 20 + 8 补偿，使选中框与按钮同宽(216)同右缘(248)、
+    // 中心(140)与按钮/侧栏中心一致；宽度仍随侧栏弹性变化
+    ".YDXeBa_sessionRow { box-sizing: border-box !important; width: calc(100% - 48px) !important; margin-left: 20px !important; margin-right: 28px !important; }",
     // 折叠态设置图标在底部区域内垂直居中
     ".hHd-Xa_settingsArea { display: flex !important; align-items: center !important; justify-content: center !important; }",
   ].join("\n");

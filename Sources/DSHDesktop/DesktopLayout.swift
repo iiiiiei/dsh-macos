@@ -25,14 +25,25 @@ enum DesktopLayout {
     static let trafficLightRowHeight: CGFloat = 28
 }
 
-/// 透明拖拽带：红绿灯右侧约 32pt 宽 × 32pt 高，按下拖动移动窗口。
-/// 原生等价 Electron `app-region: drag`；覆盖区域为红绿灯右侧窄条，
-/// 不覆盖主内容顶栏（避免挡按钮/链接/输入框的点击）。
+/// 透明拖拽带：红绿灯水平行整行（全宽），按住拖动移动窗口。
+/// 原生等价 Electron `app-region: drag`；用 mouseDragged 手动移动窗口
+/// （performDrag(with:) 在非系统标题栏场景实测无效）。
 final class DragStripView: NSView {
+    private var dragStart: NSPoint = .zero
+    private var windowOrigin: NSPoint = .zero
+
     override var isOpaque: Bool { false }
 
     override func mouseDown(with event: NSEvent) {
-        // 潜在拖动开始；未拖动的单击被吞（区域为红绿灯右侧窄条，下方为页面边缘）
-        window?.performDrag(with: event)
+        dragStart = event.locationInWindow
+        windowOrigin = window?.frame.origin ?? .zero
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window else { return }
+        let delta = NSPoint(x: event.locationInWindow.x - dragStart.x,
+                            y: event.locationInWindow.y - dragStart.y)
+        window.setFrameOrigin(NSPoint(x: windowOrigin.x + delta.x,
+                                      y: windowOrigin.y + delta.y))
     }
 }

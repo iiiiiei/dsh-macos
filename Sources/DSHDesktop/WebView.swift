@@ -182,6 +182,10 @@ struct HarnessWebView: NSViewRepresentable {
                   let contentView = window.contentView,
                   let close = window.standardWindowButton(.closeButton),
                   let zoom = window.standardWindowButton(.zoomButton) else { return nil }
+            // 原始坐标自查：按钮 frame（相对 superview）与 superview frame、contentView bounds
+            if let sv = close.superview {
+                Log.info("traffic raw: close=\(close.frame) sv=\(sv.frame) svClass=\(type(of: sv)) contentBounds=\(contentView.bounds)")
+            }
             let cf = close.convert(close.bounds, to: contentView)
             let zf = zoom.convert(zoom.bounds, to: contentView)
             let left = cf.minX   // x 坐标不受 flipped 影响
@@ -303,6 +307,10 @@ struct HarnessWebView: NSViewRepresentable {
                     }
                   }
                   var rail = document.querySelector('.hHd-Xa_railIn') || document.querySelector('[class*="railIn"]');
+                  if (rail) {
+                    var rcs = getComputedStyle(rail);
+                    out.push({ railStyle: { ml: rcs.marginLeft, mr: rcs.marginRight, pl: rcs.paddingLeft, pr: rcs.paddingRight, w: rcs.width, box: rcs.boxSizing } });
+                  }
                   if (rail && rail.children.length) {
                     var last = rail.children[rail.children.length - 1];
                     var lr = last.getBoundingClientRect();

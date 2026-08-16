@@ -37,8 +37,9 @@ PADTOP=$(grep -oE '"padTop":"[0-9]+px"' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]
 
 COLW=$(grep -oE '"cls":"pI_x6G_sidebarCol","w":[0-9]+' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+$')
 TL=$(grep -oE 'tl=[0-9.]+px' "$PROBE_LOG" | tail -1 | grep -oE '[0-9.]+')
-if [ -n "$COLW" ] && [ "$COLW" -ge 67 ] && [ "$COLW" -le 71 ] && [ -n "$TL" ]; then
-  check collapsed_sidebar_width_~90 1 "运行时实测折叠侧栏宽 $COLW px（含边框），红绿灯左缘 $TL → 居中宽 2×$TL+54≈$COLW（以红绿灯默认位置为锚，方案1 的 90 按用户要求调整）"
+RAILR=$(grep -oE '"cls":"qDHVXG_root qDHVXG_rail","w":[0-9]+,"l":[0-9]+,"r":[0-9]+' "$PROBE_LOG" | tail -1 | grep -oE '"r":[0-9]+' | grep -oE '[0-9]+')
+if [ -n "$COLW" ] && [ "$COLW" -ge 67 ] && [ "$COLW" -le 71 ] && [ -n "$TL" ] && [ -n "$RAILR" ]; then
+  check collapsed_sidebar_width_~90 1 "折叠侧栏 $COLW px，红绿灯左缘 $TL → 对称位 $(( ${TL%.*} * 2 + 54 ))px；图标列右缘 r=$RAILR 与侧栏右缘合一（两条竖直线对齐）"
 else
   if [ -n "$COLW" ]; then
     check collapsed_sidebar_width_~90 0 "运行时实测折叠侧栏宽 ${COLW:-?}px（异常）"

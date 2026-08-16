@@ -19,8 +19,11 @@
     ".hHd-Xa_logoRow { margin-top: var(--dsh-traffic-inset, 28px) !important; }",
     // 折叠态：侧栏宽度适配红绿灯在折叠侧栏内水平居中（以红绿灯系统默认
     // 绝对位置为锚）：宽 = 红绿灯左缘 × 2 + 组宽。注入的 --dsh-traffic-width
-    // 含 8px 尾部间距，故减去；系统默认左缘 12 → 12*2 + 54 = 78px
+    // 含 8px 尾部间距，故减去；实测左缘 7 + 组宽 54 → 68px
     ".pI_x6G_sidebarCol:has(.hHd-Xa_collapsed) { width: calc(var(--dsh-traffic-left) * 2 + var(--dsh-traffic-width) - 8px) !important; }",
+    // 折叠态：去掉 railIn 左右 10px 内缩，图标列右缘与侧栏右缘合一（视觉连贯），
+    // 红绿灯组（左缘 7 ~ 右缘 61）在侧栏 68px 内严格居中（左 7 / 右 7）
+    ".pI_x6G_sidebarCol:has(.hHd-Xa_collapsed) .hHd-Xa_railIn { padding-left: 0 !important; padding-right: 0 !important; }",
     // 主内容区让出透明标题栏行（拖拽带高度）
     ".pI_x6P_centerCol, .pI_x6G_centerCol { padding-top: var(--dsh-traffic-inset, 28px) !important; }",
     // 会话选中框右对齐（与 logo 行内容右缘一致，侧栏 280 - 左右 12 = 256）

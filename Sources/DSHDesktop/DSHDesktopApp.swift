@@ -103,12 +103,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        // 沉浸式窗口：等主窗口出现后设置透明标题栏 + 内容延伸（红绿灯悬浮、内容顶到顶）
-        ensureFullSizeWindow()
+        // 沉浸式窗口：等主窗口出现后设置透明标题栏 + 内容延伸（红绿灯悬浮、内容顶到顶）。
+        // 受「沉浸式标题栏」开关控制（默认开，关闭后回到系统标准标题栏）。
+        applyWindowEnhancements()
         NotificationCenter.default.addObserver(
             self, selector: #selector(windowDidBecomeKey(_:)),
             name: NSWindow.didBecomeKeyNotification, object: nil
         )
+        // 设置变化（UserDefaults）时幂等重放窗口增强，支持运行时开关
+        NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyWindowEnhancements()
+        }
 
         // 窗口菜单补充：每次打开前确保系统级控制项在位
         ensureWindowMenu()
@@ -123,17 +130,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 沉浸式窗口（顶到顶）
 
     @objc private func windowDidBecomeKey(_ notification: Notification) {
-        ensureFullSizeWindow()
+        applyWindowEnhancements()
     }
 
-    private func ensureFullSizeWindow() {
-        guard !fullSizeApplied,
-              let window = NSApp.windows.first(where: { $0.title.hasPrefix("DSH Desktop") }) else { return }
-        fullSizeApplied = true
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.styleMask.insert(.fullSizeContentView)
-        Log.info("window: fullSizeContentView 已应用（内容顶到顶）")
+    /// 沉浸式标题栏（幂等，可逆）：
+    /// 开 = 红绿灯悬浮、内容顶到顶；关 = 系统标准标题栏（恢复官方观感）
+    private func applyWindowEnhancements() {
+        let immersive = AppState.shared.immersiveTitlebar
+        for window in NSApp.windows where window.title.hasPrefix("DSH Desktop") {
+            if immersive {
+                window.titlebarAppearsTransparent = true
+                window.titleVisibility = .hidden
+                window.styleMask.insert(.fullSizeContentView)
+                window.titlebarSeparatorStyle = .none
+            } else {
+                window.titlebarAppearsTransparent = false
+                window.titleVisibility = .visible
+                window.styleMask.remove(.fullSizeContentView)
+                window.titlebarSeparatorStyle = .automatic
+            }
+            fullSizeApplied = true
+        }
+        if fullSizeApplied {
+            Log.info("window: 沉浸式标题栏 = \(immersive ? "开（顶到顶）" : "关（标准标题栏）")")
+        }
     }
 
     // MARK: - 窗口菜单补充（SwiftUI 只保留最小化/缩放/前置全部窗口/窗口列表）

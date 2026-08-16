@@ -48,6 +48,12 @@ final class AppState: ObservableObject {
     /// GUI 当前打开的会话（WebView fetch 钩子上报）；nil = 未知，退回最近活跃
     @Published var currentSessionId: String?
 
+    // MARK: - Appearance（默认 Official，持久化）
+
+    @Published var appearanceId: String = AppearanceCatalog.official.id
+    @Published var immersiveTitlebar: Bool = true
+    @Published var zhOverlay: Bool = true
+
     // MARK: - 设置（UserDefaults 持久化）
 
     @Published var port: Int
@@ -62,6 +68,13 @@ final class AppState: ObservableObject {
         serverCommand = defaults.string(forKey: "serverCommand") ?? "dsh --profile web"
         autoStartServer = defaults.object(forKey: "autoStartServer") as? Bool ?? true
         keepServerOnQuit = defaults.object(forKey: "keepServerOnQuit") as? Bool ?? false
+        appearanceId = defaults.string(forKey: "appearanceId") ?? AppearanceCatalog.official.id
+        if !AppearanceCatalog.isKnown(appearanceId) {
+            appearanceId = AppearanceCatalog.official.id
+        }
+        let toggles = EnhancementToggles(defaults: defaults)
+        immersiveTitlebar = toggles.immersiveTitlebar
+        zhOverlay = toggles.zhOverlay
     }
 
     var url: URL {
@@ -77,5 +90,7 @@ final class AppState: ObservableObject {
         defaults.set(serverCommand, forKey: "serverCommand")
         defaults.set(autoStartServer, forKey: "autoStartServer")
         defaults.set(keepServerOnQuit, forKey: "keepServerOnQuit")
+        defaults.set(appearanceId, forKey: "appearanceId")
+        EnhancementToggles(immersiveTitlebar: immersiveTitlebar, zhOverlay: zhOverlay).save(defaults)
     }
 }

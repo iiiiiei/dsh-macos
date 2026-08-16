@@ -19,7 +19,9 @@
 - **设置**：端口、启动命令、自动启动服务器、退出时保持服务器、开机自启（SMAppService）；设置入口在应用菜单（Cmd+,），菜单栏不重复放
 - **菜单栏常驻（DSH Launcher）**：独立轻量 Launcher 应用（GeminiAppLauncher 模式，LSUIElement 无 Dock 图标）：鲸鱼小图标常驻菜单栏，左键点击启动/唤起主应用，右键菜单可设"登录时自动启动"（以 SMAppService.mainApp.status 为唯一真相）；主应用 Dock"退出"= 干净退出，菜单栏图标由 Launcher 保证永远在
 - **窗口菜单**：每次打开前自动补齐系统级控制（居中窗口/移到左右半屏/切换全屏）
-- **汉化补丁**：`scripts/i18n-patch.py` 修复 DSH 官方 i18n 遗漏（Session log 按钮、Full access 权限选项、轨迹面板 51 条、斜杠命令描述 5 条），幂等可重跑，重启 DSH 后生效
+- **中文通俗说明（Appearance Overlay）**：注入式汉化固定 UI（轨迹面板/斜杠命令/设置面板等 60+ 条），整节点精确匹配保护聊天正文；设置可关，关闭后还原官方原文（不修改官方源码树）
+- **Appearance 协议**：默认 Official（零覆盖 Reference）；皮肤类外观基于 Official 叠加 Overlay（Glass/Compact 预留）；沉浸式标题栏/中文说明均可独立开关
+- **自动验证**：`bash scripts/verify-desktop-appearance.sh`（10 项 CHECK：Appearance 默认/可逆、窗口 flags、无魔法数、WebView 透明、汉化范围/性能、图标、无轮询）
 - **桌面桥接插件**（dsh-desktop-bridge）：`/api/desktop/status` + `/api/desktop/notify`（+ `/api/desktop/stats`），桌面集成本身就是一个 DSH 插件
 - **自测模式**：`--selftest` 端到端验证，CI 可用
 - **冷启动优化**：命令解析结果缓存、launchd 环境零 PATH 依赖（详见 [架构](#架构)）
@@ -103,7 +105,9 @@ dsh-macos/
 │   └── make-icon.swift            # 程序化生成 AppIcon.icns
 ├── Sources/DSHLauncher/            # 菜单栏常驻 Launcher（LSUIElement + SMAppService）
 ├── bridge/dsh-desktop-bridge/     # 桌面桥接插件（DSH 生态内的普通 Cordis 宿主插件）
-├── scripts/i18n-patch.py          # DSH 官方 i18n 遗漏汉化补丁（幂等）
+├── Resources/overlays/            # Appearance Overlay 资源（zh-simplified.js 等）
+├── Sources/DSHDesktop/Appearance.swift  # Appearance 协议（manifest + 目录 + 增强开关）
+├── scripts/verify-desktop-appearance.sh # 桌面外观自动验证（10 项 CHECK）
 └── README.md
 ```
 

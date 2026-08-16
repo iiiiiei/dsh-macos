@@ -59,6 +59,9 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 # 菜单栏模板图标 + 官方 SVG（运行时可用）
 cp "$ROOT/.build/whale-icon.png" "$APP/Contents/Resources/whale-icon.png"
 cp "$ROOT/Resources/whale.svg" "$APP/Contents/Resources/whale.svg"
+# Appearance Overlay 资源（zh-simplified 等）
+mkdir -p "$APP/Contents/Resources/overlays"
+cp "$ROOT"/Resources/overlays/*.js "$APP/Contents/Resources/overlays/"
 
 echo "==> [4/5] build DSHLauncher (菜单栏常驻)"
 LAUNCHER="$ROOT/build/DSH Launcher.app"

@@ -57,13 +57,25 @@ struct HarnessWebView: NSViewRepresentable {
         config.userContentController.addUserScript(userScript)
         config.userContentController.add(context.coordinator, name: "dshSession")
 
+        // 中文通俗说明 Overlay（Appearance 增强，Official 默认零覆盖；
+        // 开关关闭时 setEnabled(false) 还原官方原文，不残留）
+        if let overlayPath = Bundle.main.path(forResource: "zh-simplified", ofType: "js", inDirectory: "overlays"),
+           let overlay = try? String(contentsOfFile: overlayPath, encoding: .utf8) {
+            let zhScript = WKUserScript(source: overlay, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            config.userContentController.addUserScript(zhScript)
+        }
+
         let webView = WKWebView(frame: .zero, configuration: config)
+        // 沉浸式：页面背景透明（配合 fullSizeContentView 顶到顶；WKWebView 的
+        // isOpaque 只读，透明由 underPageBackgroundColor 提供）
+        webView.underPageBackgroundColor = .clear
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         context.coordinator.webView = webView
         context.coordinator.onSessionViewed = onSessionViewed
         context.coordinator.observeReload()
+        context.coordinator.observeEnhancements()
         return webView
     }
 
@@ -121,13 +133,52 @@ struct HarnessWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Log.info("webview: didFinish title=\(webView.title ?? "-")")
-            // 验证会话钩子注入（调试用）
-            webView.evaluateJavaScript("window.__dshSessionHook === true") { result, _ in
-                Log.info("webview: session hook 注入 = \(result ?? "?")")
-            }
+            syncEnhancements(webView)
             isLoading = false
             hasLoadedOnce = true
             parent.onLoadState(.loaded(title: webView.title ?? "DeepSeek Harness"))
+        }
+
+        // MARK: - Appearance 增强同步（zh Overlay 开关 + 安全区变量）
+
+        private func syncEnhancements(_ webView: WKWebView) {
+            // zh Overlay 开关（关 = 还原官方原文）
+            let zh = UserDefaults.standard.object(forKey: "zhOverlay") as? Bool ?? true
+            webView.evaluateJavaScript("window.__dshZhOverlay && window.__dshZhOverlay.setEnabled(\(zh))") { _, error in
+                if let error { Log.info("webview: zh overlay 开关同步失败 \(error.localizedDescription)") }
+            }
+            // 安全区：用 standardWindowButton 读取 traffic light 实际 frame，动态注入 CSS 变量
+            // （禁止散落硬编码魔法数；Official 外观不消费该变量，仅供未来皮肤 Overlay 使用）
+            if let metrics = trafficLightMetrics(for: webView) {
+                let script = """
+                document.documentElement.style.setProperty('--dsh-traffic-left', '\(metrics.left)px');
+                document.documentElement.style.setProperty('--dsh-traffic-width', '\(metrics.width)px');
+                """
+                webView.evaluateJavaScript(script) { _, _ in }
+            }
+        }
+
+        /// 读取红绿灯实际 frame（内容坐标），动态计算左缘与占用宽度
+        private func trafficLightMetrics(for webView: WKWebView) -> (left: CGFloat, width: CGFloat)? {
+            guard let window = webView.window,
+                  let contentView = window.contentView,
+                  let close = window.standardWindowButton(.closeButton),
+                  let zoom = window.standardWindowButton(.zoomButton) else { return nil }
+            let cf = close.convert(close.bounds, to: contentView)
+            let zf = zoom.convert(zoom.bounds, to: contentView)
+            let left = cf.minX
+            let width = max(zf.maxX, cf.maxX) - left + 8
+            return (left, width)
+        }
+
+        /// 设置变化时联动（UserDefaults 通知）
+        func observeEnhancements() {
+            NotificationCenter.default.addObserver(
+                forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let webView = self?.webView, webView.url != nil else { return }
+                self?.syncEnhancements(webView)
+            }
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

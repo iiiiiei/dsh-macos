@@ -138,6 +138,12 @@ struct HarnessWebView: NSViewRepresentable {
                 Log.info("webview: frame=\(Int(webView.frame.minY)),\(Int(webView.frame.height)) edgeTop=\(webView.frame.minY <= 1)")
             }
             syncEnhancements(webView)
+            if CommandLine.arguments.contains("--probe-sidebar") {
+                // 等 SPA 渲染完成后再探测
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                    self.probeSidebar(webView)
+                }
+            }
             isLoading = false
             hasLoadedOnce = true
             parent.onLoadState(.loaded(title: webView.title ?? "DeepSeek Harness"))
@@ -157,22 +163,34 @@ struct HarnessWebView: NSViewRepresentable {
                 let script = """
                 document.documentElement.style.setProperty('--dsh-traffic-left', '\(metrics.left)px');
                 document.documentElement.style.setProperty('--dsh-traffic-width', '\(metrics.width)px');
+                document.documentElement.style.setProperty('--dsh-traffic-inset', '\(metrics.rowHeight)px');
                 """
                 webView.evaluateJavaScript(script) { _, _ in }
             }
+            // 方案1 布局 Overlay（幂等注入：固定 style id）
+            if let layoutPath = Bundle.main.path(forResource: "desktop-layout", ofType: "js", inDirectory: "overlays"),
+               let layout = try? String(contentsOfFile: layoutPath, encoding: .utf8) {
+                webView.evaluateJavaScript(layout) { _, error in
+                    if let error { Log.info("webview: desktop-layout 注入失败 \(error.localizedDescription)") }
+                }
+            }
         }
 
-        /// 读取红绿灯实际 frame（内容坐标），动态计算左缘与占用宽度
-        private func trafficLightMetrics(for webView: WKWebView) -> (left: CGFloat, width: CGFloat)? {
+        /// 读取红绿灯实际 frame（内容坐标），动态计算左缘、占用宽度与行高
+        private func trafficLightMetrics(for webView: WKWebView) -> (left: CGFloat, width: CGFloat, rowHeight: CGFloat)? {
             guard let window = webView.window,
                   let contentView = window.contentView,
                   let close = window.standardWindowButton(.closeButton),
                   let zoom = window.standardWindowButton(.zoomButton) else { return nil }
             let cf = close.convert(close.bounds, to: contentView)
             let zf = zoom.convert(zoom.bounds, to: contentView)
-            let left = cf.minX
+            let left = cf.minX   // x 坐标不受 flipped 影响
             let width = max(zf.maxX, cf.maxX) - left + 8
-            return (left, width)
+            // 行高：window 高度与内容布局区（contentLayoutRect，10.10+）的差值，
+            // fullSize 下即红绿灯悬浮行高度（系统 API 动态计算，不依赖坐标系换算）
+            let rowHeight = max(DesktopLayout.trafficLightRowHeight,
+                                window.frame.height - window.contentLayoutRect.height)
+            return (left, width, rowHeight)
         }
 
         /// 设置变化时联动（UserDefaults 通知）
@@ -187,6 +205,78 @@ struct HarnessWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             isLoading = true
+        }
+
+        /// 探测折叠侧栏容器（--probe-sidebar 调试模式，输出候选选择器）
+        private func probeSidebar(_ webView: WKWebView) {
+            let js = """
+            (function () {
+              const out = [];
+              document.querySelectorAll('*').forEach(function (el) {
+                const r = el.getBoundingClientRect();
+                if (r.width > 10 && r.height > 10 && r.left < 160 && r.width < 400) {
+                  out.push({ tag: el.tagName, cls: String(el.className).slice(0, 80),
+                             w: Math.round(r.width), h: Math.round(r.height), t: Math.round(r.top),
+                             role: el.getAttribute('role'), aria: el.getAttribute('aria-label') });
+                }
+              });
+              return JSON.stringify(out.slice(0, 12));
+            })();
+            """
+            webView.evaluateJavaScript(js) { result, _ in
+                Log.info("sidebar probe: \(result ?? "?")")
+            }
+            // 第二轮：模拟点击折叠按钮后输出折叠态侧栏容器
+            let collapse = """
+            (function () {
+              var btns = document.querySelectorAll('button');
+              var hit = null;
+              for (var i = 0; i < btns.length; i++) {
+                var a = btns[i].getAttribute('aria-label') || '';
+                var t = (btns[i].textContent || '').trim();
+                if (/折叠|收起|collapse|sidebar/i.test(a + t)) { hit = btns[i]; break; }
+              }
+              if (!hit) return 'NO_COLLAPSE_BUTTON';
+              hit.click();
+              return 'clicked: ' + (hit.getAttribute('aria-label') || hit.textContent.trim());
+            })();
+            """
+            webView.evaluateJavaScript(collapse) { result, _ in
+                Log.info("collapse probe: \(result ?? "?")")
+            }
+            // 展开态 logo 行避让实测（layout overlay 注入后 margin-top）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let logo = """
+                (function () {
+                  var el = document.querySelector('.hHd-Xa_logoRow');
+                  if (!el) return 'NO_LOGO_ROW';
+                  var cs = getComputedStyle(el);
+                  return 'marginTop=' + cs.marginTop + ' inset=' + getComputedStyle(document.documentElement).getPropertyValue('--dsh-traffic-inset').trim();
+                })();
+                """
+                webView.evaluateJavaScript(logo) { result, _ in
+                    Log.info("logo probe: \(result ?? "?")")
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let measure = """
+                (function () {
+                  var cols = document.querySelectorAll('div');
+                  var out = [];
+                  for (var i = 0; i < cols.length; i++) {
+                    var c = cols[i].className;
+                    var r = cols[i].getBoundingClientRect();
+                    if (typeof c === 'string' && /sidebarCol|rail/i.test(c) && r.width > 0) {
+                      out.push({ cls: c.slice(0, 80), w: Math.round(r.width), t: Math.round(r.top) });
+                    }
+                  }
+                  return JSON.stringify(out.slice(0, 6));
+                })();
+                """
+                webView.evaluateJavaScript(measure) { result, _ in
+                    Log.info("collapsed probe: \(result ?? "?")")
+                }
+            }
         }
 
         // MARK: - 下载处理（WKWebView 不保存 <a download>，这里拦截导出请求由原生下载）

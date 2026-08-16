@@ -96,6 +96,7 @@ struct DSHDesktopApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var fullSizeApplied = false
+    private var dragStrip: DragStripView?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("applicationDidFinishLaunching")
@@ -115,6 +116,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.applyWindowEnhancements()
+        }
+        // 窗口尺寸变化时跟随拖拽带（Low Memory：事件驱动，无轮询）
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let window = notification.object as? NSWindow,
+                  window.title.hasPrefix("DSH Desktop") else { return }
+            self?.layoutDragStrip(window)
         }
 
         // 窗口菜单补充：每次打开前确保系统级控制项在位
@@ -150,6 +159,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 window.titlebarSeparatorStyle = .automatic
             }
             fullSizeApplied = true
+            // 拖拽带：红绿灯右侧约 32pt（对齐方案1），原生 performDrag
+            installDragStrip(in: window)
         }
         if fullSizeApplied {
             Log.info("window: 沉浸式标题栏 = \(immersive ? "开（顶到顶）" : "关（标准标题栏）")")
@@ -181,6 +192,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// NSMenuDelegate：窗口菜单每次打开前确保补充项在位
     func menuWillOpen(_ menu: NSMenu) {
         ensureWindowMenu()
+    }
+
+    // MARK: - 拖拽带（方案1：红绿灯右侧约 32 CSS px 透明拖拽）
+
+    private func installDragStrip(in window: NSWindow) {
+        if let dragStrip, dragStrip.window === window { return }
+        let strip = DragStripView(frame: .zero)
+        window.contentView?.addSubview(strip)
+        dragStrip = strip
+        layoutDragStrip(window)
+    }
+
+    private func layoutDragStrip(_ window: NSWindow) {
+        guard let strip = dragStrip, let contentView = window.contentView else { return }
+        guard let close = window.standardWindowButton(.closeButton),
+              let zoom = window.standardWindowButton(.zoomButton) else { return }
+        // 红绿灯实际 frame（动态计算，不散落魔法数）；按钮坐标从所在视图转换到内容视图
+        let closeFrame = close.superview.map { contentView.convert(close.frame, from: $0) } ?? close.frame
+        let zoomFrame = zoom.superview.map { contentView.convert(zoom.frame, from: $0) } ?? zoom.frame
+        let rightEdge = max(closeFrame.maxX, zoomFrame.maxX) + 6
+        // contentView 坐标系原点在左下：顶部 y = maxY - 高度
+        strip.frame = NSRect(
+            x: rightEdge,
+            y: contentView.bounds.maxY - DesktopLayout.dragStripHeight,
+            width: DesktopLayout.dragStripWidth,
+            height: DesktopLayout.dragStripHeight
+        )
     }
 
     private func mainWindow() -> NSWindow? {

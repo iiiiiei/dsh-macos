@@ -50,18 +50,19 @@ func renderPixels(size: Int, draw: (CGContext, CGFloat) -> Void) -> NSBitmapImag
 /// 应用图标：方图画布 + 圆角白底 + 黑色鲸鱼（内容居中留白，圆角可见）
 func renderAppIcon(size: Int) -> NSImage {
     let rep = renderPixels(size: size) { ctx, s in
-        // 圆角白底：透明边距 4%，圆角 20%（系统叠加图标遮罩后观感接近官方 iOS 图标）
-        let inset = s * 0.04
+        // 圆角白底：加大边距（inset 8%）避免白底顶格显得比相邻 App 大；
+        // 圆角 22%（对齐方案1 观感：主体占比缩小、留白均衡）
+        let inset = s * 0.08
         let bgRect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-        let corner = s * 0.20
+        let corner = s * 0.22
         ctx.addPath(CGPath(roundedRect: bgRect, cornerWidth: corner, cornerHeight: corner, transform: nil))
         ctx.clip()
         NSColor.white.setFill()
         bgRect.fill()
         ctx.resetClip()
 
-        // 黑色鲸鱼：居中，高度约占 64%
-        let whaleSize = s * 0.64
+        // 黑色鲸鱼：居中，高度约占 60%
+        let whaleSize = s * 0.60
         let whaleRect = NSRect(
             x: (s - whaleSize) / 2,
             y: (s - whaleSize) / 2,

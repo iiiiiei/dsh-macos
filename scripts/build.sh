@@ -60,10 +60,26 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 cp "$ROOT/.build/whale-icon.png" "$APP/Contents/Resources/whale-icon.png"
 cp "$ROOT/Resources/whale.svg" "$APP/Contents/Resources/whale.svg"
 
-echo "==> [4/4] codesign (ad-hoc)"
+echo "==> [4/5] build DSHLauncher (菜单栏常驻)"
+LAUNCHER="$ROOT/build/DSH Launcher.app"
+rm -rf "$LAUNCHER"
+mkdir -p "$LAUNCHER/Contents/MacOS" "$LAUNCHER/Contents/Resources"
+swiftc -O \
+  -target arm64-apple-macosx13.0 \
+  -vfsoverlay "$FIX_DIR/overlay.yaml" \
+  "$ROOT/Sources/DSHLauncher/main.swift" \
+  -o "$LAUNCHER/Contents/MacOS/DSHLauncher"
+cp "$ROOT/Resources/Info-Launcher.plist" "$LAUNCHER/Contents/Info.plist"
+cp "$ROOT/.build/whale-icon.png" "$LAUNCHER/Contents/Resources/whale-icon.png"
+cp "$APP/Contents/Resources/AppIcon.icns" "$LAUNCHER/Contents/Resources/AppIcon.icns"
+
+echo "==> [5/5] codesign (ad-hoc)"
 codesign --force --deep -s - "$APP"
+codesign --force --deep -s - "$LAUNCHER"
 
 echo ""
-echo "==> done: $APP"
-echo "    运行: open \"$APP\""
+echo "==> done:"
+echo "    $APP"
+echo "    $LAUNCHER"
+echo "    运行: open \"$LAUNCHER\""
 echo "    自测: \"$APP/Contents/MacOS/DSHDesktop\" --selftest"

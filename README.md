@@ -8,7 +8,8 @@
 
 ## 功能特性
 
-- **内嵌 DSH Web GUI**：WKWebView 加载 `http://127.0.0.1:<port>/`（默认 3080），隐藏标题栏沉浸式窗口 + 原生菜单 + 跟随系统深色模式
+- **内嵌 DSH Web GUI**：WKWebView 加载 `http://127.0.0.1:<port>/`（默认 3080），沉浸式窗口（fullSizeContentView 内容顶到顶、红绿灯悬浮）+ 原生菜单 + 跟随系统深色模式
+- **会话导出下载**：WKWebView 拦截 /api/session.export 由原生保存到 ~/Downloads（修复浏览器下载在 WKWebView 中不落地的问题）
 - **服务器生命周期管理**
   - 启动时检测端口：已有实例 → attach（不干扰现有服务器）；无实例 → 自动冷启动
   - 健康轮询：启动阶段 0.5s 加密探测，运行后 5s 慢轮询；服务器挂掉自动提示
@@ -16,9 +17,9 @@
 - **菜单栏常驻**（🐋 官方鲸鱼模板图标，自动适配深浅色；macOS 原生菜单）：状态指示（绿/黄/红）、**token 用量统计**（竖向三行，官方口径）、浏览器打开、刷新、启动/停止服务器、测试通知、前往开放平台、退出
 - **Token 用量统计**：口径与 DSH 官方 StatsLine 完全一致（`billedInput = uncached + cacheRead + cacheWrite`、缓存命中率 = cacheRead/billed）；**跟随 GUI 当前打开的对话窗口**（WebView 注入 fetch 钩子监听会话切换），无会话时退回最近活跃/今日聚合（直连 DSH RPC，无需插件激活）
 - **设置**：端口、启动命令、自动启动服务器、退出时保持服务器、开机自启（SMAppService）；设置入口在应用菜单（Cmd+,），菜单栏不重复放
-- **后台常驻**：Dock"退出"/Cmd+Q 隐藏窗口保持后台驻留（Gemini 式观感，菜单栏"显示主窗口"可恢复），菜单栏"退出 DSH Desktop"才真正结束进程
+- **菜单栏常驻（DSH Launcher）**：独立轻量 Launcher 应用（GeminiAppLauncher 模式，LSUIElement 无 Dock 图标）：鲸鱼小图标常驻菜单栏，左键点击启动/唤起主应用，右键菜单可设"登录时自动启动"（以 SMAppService.mainApp.status 为唯一真相）；主应用 Dock"退出"= 干净退出，菜单栏图标由 Launcher 保证永远在
 - **窗口菜单**：每次打开前自动补齐系统级控制（居中窗口/移到左右半屏/切换全屏）
-- **汉化补丁**：`scripts/i18n-patch.sh` 修复 DSH 官方 i18n 遗漏（Session log 按钮、Full access 权限选项），重启 DSH 后生效
+- **汉化补丁**：`scripts/i18n-patch.py` 修复 DSH 官方 i18n 遗漏（Session log 按钮、Full access 权限选项、轨迹面板 51 条、斜杠命令描述 5 条），幂等可重跑，重启 DSH 后生效
 - **桌面桥接插件**（dsh-desktop-bridge）：`/api/desktop/status` + `/api/desktop/notify`（+ `/api/desktop/stats`），桌面集成本身就是一个 DSH 插件
 - **自测模式**：`--selftest` 端到端验证，CI 可用
 - **冷启动优化**：命令解析结果缓存、launchd 环境零 PATH 依赖（详见 [架构](#架构)）
@@ -100,7 +101,9 @@ dsh-macos/
 ├── scripts/
 │   ├── build.sh                   # 编译 + 打包 .app + 图标 + ad-hoc 签名（含 CLT 修复）
 │   └── make-icon.swift            # 程序化生成 AppIcon.icns
+├── Sources/DSHLauncher/            # 菜单栏常驻 Launcher（LSUIElement + SMAppService）
 ├── bridge/dsh-desktop-bridge/     # 桌面桥接插件（DSH 生态内的普通 Cordis 宿主插件）
+├── scripts/i18n-patch.py          # DSH 官方 i18n 遗漏汉化补丁（幂等）
 └── README.md
 ```
 
@@ -128,7 +131,7 @@ Command Line Tools）；CLT 正常后 overlay 仍会生成但无副作用。
 
 1. **安装**：把 `build/DSH Desktop.app` 复制到 `/Applications/`（启动台才能识别）
 2. **启动**：双击或 Launchpad 打开。首次会看到服务器状态面板（"正在冷启动 DSH 服务器（首次约需数秒）…"），就绪后自动切换为 Web GUI
-3. **菜单栏**（⚡🛡，原生下拉菜单）：状态 + token 统计竖向三行（输入/输出/缓存命中，**跟随 GUI 当前打开的对话窗口**，通过 WebView fetch 钩子监听会话切换）+ 全部操作；关闭窗口不退出应用（菜单栏常驻），Cmd+Q 退出
+3. **菜单栏（DSH Launcher）**：常驻鲸鱼小图标，左键点击启动主应用；主应用内顶部"服务器"菜单含全部操作（启停/刷新/浏览器/开放平台/测试通知）；关闭窗口不退出应用（Dock 常驻），Cmd+Q 退出
 
 ### 设置项
 

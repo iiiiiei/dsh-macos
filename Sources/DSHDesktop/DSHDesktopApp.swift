@@ -8,7 +8,7 @@ struct DSHDesktopApp: App {
     @StateObject private var server = ServerManager.shared
 
     /// 官方鲸鱼模板图标（黑白自动适配，等价于网页版 favicon 的深浅色切换）。
-    /// 图标 PNG 为 36x36 像素（2x），显示尺寸固定 18pt，避免菜单栏图标过大。
+    /// 菜单栏常驻由 DSH Launcher 提供，本图标仅作为资源保留。
     static let whaleIcon: NSImage = {
         let path = Bundle.main.path(forResource: "whale-icon", ofType: "png")
             ?? Bundle.main.path(forResource: "whale", ofType: "svg")
@@ -38,45 +38,80 @@ struct DSHDesktopApp: App {
                     }
                 }
                 .disabled(server.status == .starting)
+
+                Divider()
+
+                Button("刷新页面") {
+                    NotificationCenter.default.post(name: .dshReloadRequested, object: nil)
+                }
+                Button("显示主窗口") {
+                    if let window = NSApp.windows.first(where: { $0.title.hasPrefix("DSH Desktop") }) {
+                        window.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                }
+                Button("在浏览器中打开") {
+                    NSWorkspace.shared.open(AppState.shared.url)
+                }
+                Button("前往开放平台") {
+                    NSWorkspace.shared.open(URL(string: "https://platform.deepseek.com/")!)
+                }
+
+                Divider()
+
+                if appState.bridgeConnected {
+                    Button("发送测试通知（桥接插件）") {
+                        Task { @MainActor in
+                            let ok = await BridgeClient.shared.notify(
+                                title: "DSH Desktop",
+                                message: "来自 dsh-desktop-bridge 插件的原生通知 ✅",
+                                appState: appState
+                            )
+                            notifyResult(ok)
+                        }
+                    }
+                } else {
+                    Text("桥接插件未激活（重启 DSH 后可用）")
+                }
             }
         }
-
-        // 原生菜单栏：状态 + token 统计 + 操作（官方鲸鱼模板图标，自动适配深浅色）
-        MenuBarExtra {
-            MenuBarView(appState: appState, server: server)
-        } label: {
-            Image(nsImage: DSHDesktopApp.whaleIcon)
-        }
-        .menuBarExtraStyle(.menu)
 
         Settings {
             SettingsView(appState: appState, server: server)
         }
     }
+
+    /// 菜单里无法就地反馈，用系统通知展示结果
+    private func notifyResult(_ ok: Bool) {
+        let script = ok
+            ? "display notification \"已触发原生通知\" with title \"DSH Desktop\""
+            : "display notification \"桥接插件未激活，请重启 DSH 服务器\" with title \"DSH Desktop\""
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
+    }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// 仅菜单栏“退出”置位后允许终止（Dock/Cmd+Q 只关窗口不杀进程，与 Gemini 一致）
-    private var quitRequested = false
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private var fullSizeApplied = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(quitFromMenu),
-            name: .dshQuitRequested, object: nil
-        )
         Log.info("applicationDidFinishLaunching")
         // 从终端直接运行二进制时也需要常规 Dock 应用行为
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        // 等 SwiftUI 菜单系统稳定后补充窗口管理项，并周期确保不被重建清掉
+        // 沉浸式窗口：等主窗口出现后设置透明标题栏 + 内容延伸（红绿灯悬浮、内容顶到顶）
+        ensureFullSizeWindow()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowDidBecomeKey(_:)),
+            name: NSWindow.didBecomeKeyNotification, object: nil
+        )
+
+        // 窗口菜单补充：每次打开前确保系统级控制项在位
         ensureWindowMenu()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.ensureWindowMenu()
-        }
-        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.ensureWindowMenu() }
-        }
 
         if CommandLine.arguments.contains("--selftest") {
             Task { @MainActor in
@@ -85,23 +120,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func quitFromMenu() {
-        quitRequested = true
-        NSApp.terminate(nil)
+    // MARK: - 沉浸式窗口（顶到顶）
+
+    @objc private func windowDidBecomeKey(_ notification: Notification) {
+        ensureFullSizeWindow()
     }
 
-    // MARK: - 窗口菜单补充（SwiftUI 默认只保留最小化/缩放/前置全部窗口/窗口列表，
-    // macOS 15 的窗口管理项（居中/平铺/全屏）不会自动出现在菜单栏，这里补齐）
+    private func ensureFullSizeWindow() {
+        guard !fullSizeApplied,
+              let window = NSApp.windows.first(where: { $0.title.hasPrefix("DSH Desktop") }) else { return }
+        fullSizeApplied = true
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.styleMask.insert(.fullSizeContentView)
+        Log.info("window: fullSizeContentView 已应用（内容顶到顶）")
+    }
 
-    private var windowMenuPatched = false
+    // MARK: - 窗口菜单补充（SwiftUI 只保留最小化/缩放/前置全部窗口/窗口列表）
 
-    /// 周期性幂等补丁：SwiftUI 可能在窗口状态变化时重建菜单，需反复确保
     private func ensureWindowMenu() {
-        guard !windowMenuPatched || NSApp.windowsMenu?.items.contains(where: { $0.tag == 9001 }) != true else { return }
-        windowMenuPatched = true
         guard let menu = NSApp.windowsMenu else { return }
+        menu.delegate = self
         if menu.items.contains(where: { $0.tag == 9001 }) { return }
-        Log.info("window menu 当前项: " + menu.items.map { $0.title }.joined(separator: " | "))
         menu.addItem(.separator())
         let center = NSMenuItem(title: "居中窗口", action: #selector(centerWindow(_:)), keyEquivalent: "")
         let left = NSMenuItem(title: "移到左侧半屏", action: #selector(moveWindowLeft(_:)), keyEquivalent: "")
@@ -148,21 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow()?.toggleFullScreen(nil)
     }
 
-    /// 拦截非显式退出：Dock“退出”/Cmd+Q 隐藏窗口、保持后台驻留
-    /// （Gemini 式观感：看起来退出了，实际进程与菜单栏图标仍在，
-    ///   用菜单栏“显示主窗口”即可回来；只有菜单栏“退出”才真正结束）
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if quitRequested { return .terminateNow }
-        DispatchQueue.main.async {
-            NSApp.hide(nil)
-            for window in NSApp.windows {
-                window.orderOut(nil)
-            }
-        }
-        return .terminateCancel
-    }
-
-    /// 关闭最后一个窗口时不退出（常驻菜单栏）
+    /// 关闭最后一个窗口时不退出（常驻 Dock）
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -174,4 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             server.stopAndWait()
         }
     }
+}
+
+extension Notification.Name {
+    static let dshReloadRequested = Notification.Name("dshReloadRequested")
 }

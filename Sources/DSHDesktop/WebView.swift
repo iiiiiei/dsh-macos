@@ -134,6 +134,52 @@ struct HarnessWebView: NSViewRepresentable {
             isLoading = true
         }
 
+        // MARK: - 下载处理（WKWebView 不保存 <a download>，这里拦截导出请求由原生下载）
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if let url = navigationAction.request.url,
+               url.path.contains("/api/session.export") {
+                decisionHandler(.cancel)
+                Task {
+                    await Self.download(url: url)
+                }
+                return
+            }
+            decisionHandler(.allow)
+        }
+
+        /// 原生下载 session 导出 ZIP 到 ~/Downloads 并提示
+        @MainActor
+        static func download(url: URL) async {
+            Log.info("download: 开始下载 \(url.absoluteString)")
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                    Log.info("download: HTTP 非 200")
+                    return
+                }
+                // 文件名：session-log-<id>.zip
+                let sessionId = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "sessionId" })?.value ?? "session"
+                let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+                try? FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+                let file = downloads.appendingPathComponent("session-log-\(sessionId).zip")
+                try data.write(to: file)
+                Log.info("download: 已保存 \(file.path)")
+                // 通知 + 在 Finder 中显示
+                let script = "display notification \"已保存 \(file.lastPathComponent)\" with title \"DSH Desktop 会话导出\""
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-e", script]
+                try? process.run()
+                NSWorkspace.shared.activateFileViewerSelecting([file])
+            } catch {
+                Log.info("download: 失败 \(error.localizedDescription)")
+            }
+        }
+
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             Log.info("webview: didFailProvisional \(error.localizedDescription)")
             isLoading = false

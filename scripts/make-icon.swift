@@ -38,18 +38,12 @@ func renderAppIcon(size: Int) -> NSImage {
     guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
     let s = CGFloat(size)
 
-    let inset = s * 0.045
-    let rect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let corner = s * 0.21
-    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil))
-    ctx.clip()
-
-    // 纯白底（任意深浅 Dock 下都清晰，iOS 图标同款）
+    // 白底全幅（不画圆角方块，圆角遮罩交给 macOS 系统），内容占比接近原生应用
     NSColor.white.setFill()
-    rect.fill()
+    CGRect(x: 0, y: 0, width: s, height: s).fill()
 
-    // 黑色鲸鱼：居中，高度约占 58%，上下左右留白均衡（参考官方 iOS 图标比例）
-    let whaleSize = s * 0.58
+    // 黑色鲸鱼：居中，高度约占 72%（原生图标内容占比）
+    let whaleSize = s * 0.72
     let whaleRect = NSRect(
         x: (s - whaleSize) / 2,
         y: (s - whaleSize) / 2,

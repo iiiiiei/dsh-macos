@@ -281,7 +281,8 @@ struct HarnessWebView: NSViewRepresentable {
                   var el = document.querySelector('.hHd-Xa_logoRow');
                   if (!el) return 'NO_LOGO_ROW';
                   var cs = getComputedStyle(el);
-                  return 'marginTop=' + cs.marginTop + ' inset=' + getComputedStyle(document.documentElement).getPropertyValue('--dsh-traffic-inset').trim();
+                  var root = getComputedStyle(document.documentElement);
+                  return 'marginTop=' + cs.marginTop + ' inset=' + root.getPropertyValue('--dsh-traffic-inset').trim() + ' tl=' + root.getPropertyValue('--dsh-traffic-left').trim() + ' tw=' + root.getPropertyValue('--dsh-traffic-width').trim();
                 })();
                 """
                 webView.evaluateJavaScript(logo) { result, _ in

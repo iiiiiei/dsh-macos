@@ -161,8 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             fullSizeApplied = true
             // 拖拽带：红绿灯水平行整行可拖（原生 performDrag）
             installDragStrip(in: window)
-            // 红绿灯在折叠侧栏内水平居中（以红绿灯为锚点）
-            centerTrafficLights(in: window)
+            // 红绿灯保持系统默认绝对位置（折叠侧栏宽度按此锚点适配居中）
         }
         if fullSizeApplied {
             Log.info("window: 沉浸式标题栏 = \(immersive ? "开（顶到顶）" : "关（标准标题栏）")")
@@ -223,24 +222,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             height: DesktopLayout.dragStripHeight
         )
         Log.info("drag strip: x=\(Int(strip.frame.minX)) w=\(Int(strip.frame.width)) h=\(Int(strip.frame.height)) axisFromTop=\(Int(axisFromTop))")
-    }
-
-    /// 红绿灯在折叠侧栏（90px）内水平居中：以红绿灯绝对位置为锚点，
-    /// 组左缘 = (侧栏宽 - 红绿灯组宽) / 2；按钮间相对位置保持不变
-    private func centerTrafficLights(in window: NSWindow) {
-        guard let close = window.standardWindowButton(.closeButton),
-              let mini = window.standardWindowButton(.miniaturizeButton),
-              let zoom = window.standardWindowButton(.zoomButton) else { return }
-        let groupWidth = zoom.frame.maxX - close.frame.minX
-        let targetLeft = max(8, (DesktopLayout.sidebarCollapsedWidth - groupWidth) / 2)
-        let delta = targetLeft - close.frame.minX
-        guard abs(delta) > 0.5 else { return }
-        for button in [close, mini, zoom] {
-            var frame = button.frame
-            frame.origin.x += delta
-            button.setFrameOrigin(frame.origin)
-        }
-        Log.info("traffic lights: left=\(Int(targetLeft)) groupWidth=\(Int(groupWidth))（折叠侧栏内居中）")
     }
 
     private func mainWindow() -> NSWindow? {

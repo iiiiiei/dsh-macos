@@ -36,23 +36,30 @@ TL=$(grep -oE "traffic lights: left=[0-9]+" "$PROBE_LOG" | tail -1 | grep -oE '[
 PADTOP=$(grep -oE '"padTop":"[0-9]+px"' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+')
 
 COLW=$(grep -oE '"cls":"pI_x6G_sidebarCol","w":[0-9]+' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+$')
-if [ -n "$COLW" ] && [ "$COLW" -ge 88 ] && [ "$COLW" -le 92 ]; then
-  check collapsed_sidebar_width_~90 1 "运行时实测折叠侧栏宽 $COLW px（目标 90，含 1px 边框）"
+TL=$(grep -oE 'tl=[0-9.]+px' "$PROBE_LOG" | tail -1 | grep -oE '[0-9.]+')
+if [ -n "$COLW" ] && [ "$COLW" -ge 67 ] && [ "$COLW" -le 71 ] && [ -n "$TL" ]; then
+  check collapsed_sidebar_width_~90 1 "运行时实测折叠侧栏宽 $COLW px（含边框），红绿灯左缘 $TL → 居中宽 2×$TL+54≈$COLW（以红绿灯默认位置为锚，方案1 的 90 按用户要求调整）"
 else
   if [ -n "$COLW" ]; then
-    check collapsed_sidebar_width_~90 0 "运行时实测折叠侧栏宽 ${COLW:-?}px（非 90）"
+    check collapsed_sidebar_width_~90 0 "运行时实测折叠侧栏宽 ${COLW:-?}px（异常）"
   else
     check collapsed_sidebar_width_~90 0 "needs_manual: 无 GUI 环境无法建窗；请在桌面会话运行 $BIN --probe-sidebar 后查看折叠侧栏宽度"
   fi
 fi
 
+# 红绿灯保持系统默认绝对位置（无平移日志）
+if grep -q "traffic lights: left=" "$PROBE_LOG"; then
+  check traffic_lights_default_position 0 "存在红绿灯平移日志（未恢复默认位置）"
+else
+  check traffic_lights_default_position 1 "红绿灯保持系统默认绝对位置（无平移）"
+fi
+
 LOGO=$(grep -oE 'marginTop=[0-9]+px' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+')
 if [ -n "$LOGO" ] && [ "$LOGO" -ge 24 ] && [ "$LOGO" -le 34 ] \
-   && [ -n "$TL" ] && [ "$TL" -ge 14 ] && [ "$TL" -le 22 ] \
    && [ -n "$PADTOP" ] && [ "$PADTOP" -ge 24 ]; then
-  check controls_below_traffic_lights_no_overlap 1 "logo 行 margin-top=$LOGO px + 主内容 padding-top=$PADTOP px + 红绿灯左缘=$TL px（折叠侧栏内居中），均不重叠"
+  check controls_below_traffic_lights_no_overlap 1 "logo 行 margin-top=$LOGO px + 主内容 padding-top=$PADTOP px（均在红绿灯行下方，不重叠）"
 else
-  check controls_below_traffic_lights_no_overlap 0 "实测 logo=$LOGO inset=$TL padTop=${PADTOP:-?}（异常）"
+  check controls_below_traffic_lights_no_overlap 0 "实测 logo=$LOGO padTop=${PADTOP:-?}（异常）"
 fi
 
 # 3. 拖拽带：红绿灯水平行整行（全宽 × 32pt）

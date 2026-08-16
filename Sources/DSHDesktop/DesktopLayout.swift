@@ -15,8 +15,9 @@ enum DesktopLayout {
     /// 主内容顶部 caption/标题预留（方案1：约 20 CSS px；网页无预留时仅作对齐参照）
     static let captionStripHeight: CGFloat = 20
 
-    /// 折叠侧栏宽度对齐目标（方案1：90 CSS px；官方折叠轨约 56px 在其中居中）
-    static let sidebarCollapsedWidth: CGFloat = 90
+    /// 折叠侧栏宽度：以红绿灯系统默认绝对位置为锚（左缘 12 × 2 + 组宽 54 = 78），
+    /// 使红绿灯在折叠侧栏内水平居中（方案1 原目标 90，按用户反馈以红绿灯为锚调整）
+    static let sidebarCollapsedWidth: CGFloat = 78
     /// 官方折叠轨宽度（居中基准，方案1 表述）
     static let sidebarRailWidth: CGFloat = 56
 

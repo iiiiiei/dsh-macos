@@ -138,10 +138,19 @@ struct HarnessWebView: NSViewRepresentable {
                 Log.info("webview: frame=\(Int(webView.frame.minY)),\(Int(webView.frame.height)) edgeTop=\(webView.frame.minY <= 1)")
             }
             syncEnhancements(webView)
+            // 通知宿主：网页已加载（AppDelegate 借此把拖拽带重新置顶——
+            // SwiftUI 晚于拖拽带插入 WKWebView 会盖住拖拽带）
+            NotificationCenter.default.post(name: .dshWebViewLoaded, object: webView)
             if CommandLine.arguments.contains("--probe-sidebar") {
                 // 等 SPA 渲染完成后再探测
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                     self.probeSidebar(webView)
+                }
+            }
+            if CommandLine.arguments.contains("--probe-drag") {
+                // 拖拽自测：在拖拽带内合成 mouseDown/Dragged/Up，验证窗口是否移动
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                    self.probeDragSelfTest(webView)
                 }
             }
             isLoading = false
@@ -213,6 +222,100 @@ struct HarnessWebView: NSViewRepresentable {
 
         /// 探测折叠侧栏容器（--probe-sidebar 调试模式，输出候选选择器）
         private func probeSidebar(_ webView: WKWebView) {
+            // 0) 原生视图树审计：拖拽带 z 序 + hitTest 链路（诊断"顶栏不可拖拽"）
+            if let window = webView.window, let cv = window.contentView {
+                var tree = "contentView=\(type(of: cv)) subviews:["
+                for (i, sv) in cv.subviews.enumerated() {
+                    tree += " \(i)=\(type(of: sv)){\(Int(sv.frame.minX)),\(Int(sv.frame.minY)),\(Int(sv.frame.width)),\(Int(sv.frame.height))}"
+                }
+                tree += " ]"
+                Log.info("viewtree: \(tree)")
+                if let theme = cv.superview {
+                    var t = "themeframe=\(type(of: theme)) subviews:["
+                    for (i, sv) in theme.subviews.enumerated() {
+                        t += " \(i)=\(type(of: sv)){\(Int(sv.frame.minX)),\(Int(sv.frame.minY)),\(Int(sv.frame.width)),\(Int(sv.frame.height))}"
+                    }
+                    t += " ]"
+                    Log.info("themeframe: \(t)")
+                }
+                func hit(_ name: String, _ p: NSPoint) {
+                    Log.info("hittest \(name)(\(Int(p.x)),\(Int(p.y)))=\(cv.hitTest(p).map { String(describing: type(of: $0)) } ?? "nil")")
+                }
+                hit("top14", NSPoint(x: 400, y: 14))
+                hit("top14unflipped", NSPoint(x: 400, y: cv.bounds.height - 14))
+                hit("mid100", NSPoint(x: 400, y: 100))
+            }
+            // 展开态附加几何：brand/newSession/toggle/regionArea/listRoot 精确矩形
+            let expandedExtra = """
+            (function () {
+              function R(el) {
+                if (!el) return null;
+                var r = el.getBoundingClientRect();
+                return { cls: String(el.className).slice(0, 60), w: Math.round(r.width), l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), h: Math.round(r.height) };
+              }
+              var q = function (s) { return document.querySelector(s); };
+              var out = {
+                sidebarCol: R(q('.pI_x6G_sidebarCol')),
+                root: R(q('.hHd-Xa_root')),
+                logoRow: R(q('.hHd-Xa_logoRow')),
+                brand: R(q('.hHd-Xa_brand')),
+                newSession: R(q('.hHd-Xa_newSession')),
+                toggle: R(q('.hHd-Xa_toggle')),
+                regionArea: R(q('.hHd-Xa_regionArea')),
+                listRoot: R(q('.qDHVXG_root')),
+                sectionHeader: R(q('.qDHVXG_sectionHeader'))
+              };
+              var rows = document.querySelectorAll('.YDXeBa_sessionRow');
+              if (rows.length) {
+                out.row0 = R(rows[0]);
+                out.row0Parent = R(rows[0].parentElement);
+                out.row0GrandParent = R(rows[0].parentElement ? rows[0].parentElement.parentElement : null);
+              }
+              return JSON.stringify(out);
+            })();
+            """
+            // 折叠态附加几何：轨道内全部图标 x 坐标（含 overlay 对照用）
+            let collapsedExtra = """
+            (function () {
+              function R(el) {
+                if (!el) return null;
+                var r = el.getBoundingClientRect();
+                var cs = getComputedStyle(el);
+                return { cls: String(el.className).slice(0, 60), w: Math.round(r.width), l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), h: Math.round(r.height), ml: cs.marginLeft, mr: cs.marginRight, pl: cs.paddingLeft, pr: cs.paddingRight, justify: cs.justifyContent, alignI: cs.alignItems, alignS: cs.alignSelf };
+              }
+              var q = function (s) { return document.querySelector(s); };
+              var out = {
+                sidebarCol: R(q('.pI_x6G_sidebarCol')),
+                root: R(q('.hHd-Xa_root')),
+                logoRow: R(q('.hHd-Xa_logoRow')),
+                toggle: R(q('.hHd-Xa_toggle')),
+                brand: R(q('.hHd-Xa_brand')),
+                newSession: R(q('.hHd-Xa_newSession')),
+                regionArea: R(q('.hHd-Xa_regionArea')),
+                rail: R(q('.qDHVXG_root')),
+                sectionHeader: R(q('.qDHVXG_sectionHeader')),
+                footArea: R(q('.hHd-Xa_footArea')),
+                settingsArea: R(q('.hHd-Xa_settingsArea')),
+                footerActions: R(q('.hHd-Xa_footerActions'))
+              };
+              var icons = [];
+              var els = document.querySelectorAll('.hHd-Xa_root button, .hHd-Xa_root svg, .hHd-Xa_root [role="button"], .hHd-Xa_root .YDXeBa_sessionRow');
+              for (var i = 0; i < els.length; i++) {
+                var rr = els[i].getBoundingClientRect();
+                if (rr.width > 0 && rr.height > 0 && rr.right < 90) {
+                  var r = R(els[i]);
+                  r.tag = els[i].tagName;
+                  r.center = Math.round((rr.left + rr.right) / 2);
+                  icons.push(r);
+                }
+              }
+              out.icons = icons.slice(0, 30);
+              return JSON.stringify(out);
+            })();
+            """
+            // overlay 开/关（测原生对照），style id 与注入脚本一致
+            let removeOverlayJS = "var s=document.getElementById('dsh-desktop-layout'); window.__dshLayoutSaved=s?s.textContent:''; if(s)s.remove(); 'overlay-removed'"
+            let restoreOverlayJS = "var s=document.getElementById('dsh-desktop-layout'); if(!s){s=document.createElement('style'); s.id='dsh-desktop-layout'; document.head.appendChild(s);} s.textContent=window.__dshLayoutSaved||''; 'overlay-restored'"
             let js = """
             (function () {
               const out = [];
@@ -264,7 +367,7 @@ struct HarnessWebView: NSViewRepresentable {
               for (var b = 0; b < btns.length; b++) {
                 var br = btns[b].getBoundingClientRect();
                 if (br.top >= 0 && br.top < 120 && br.left > 200) {
-                  tops.push({ cls: String(btns[b].className).slice(0, 50), t: Math.round(br.top), aria: (btns[b].getAttribute('aria-label') || '').slice(0, 30) });
+                  tops.push({ cls: String(btns[b].className).slice(0, 50), t: Math.round(br.top), l: Math.round(br.left), r: Math.round(br.right), aria: (btns[b].getAttribute('aria-label') || '').slice(0, 30) });
                 }
               }
               if (tops.length) out.topButtons = tops.slice(0, 6);
@@ -293,6 +396,19 @@ struct HarnessWebView: NSViewRepresentable {
             """
             webView.evaluateJavaScript(expanded) { result, _ in
                 Log.info("layout probe: \(result ?? "?")")
+                // 展开态附加几何（含 overlay）
+                webView.evaluateJavaScript(expandedExtra) { r2, _ in
+                    Log.info("expanded extra: \(r2 ?? "?")")
+                    // 原生对照：临时移除 overlay 后重测（完成即恢复）
+                    webView.evaluateJavaScript(removeOverlayJS) { _, _ in
+                        webView.evaluateJavaScript(expandedExtra) { r3, _ in
+                            Log.info("expanded native: \(r3 ?? "?")")
+                            webView.evaluateJavaScript(restoreOverlayJS) { _, _ in
+                                Log.info("overlay restored (expanded)")
+                            }
+                        }
+                    }
+                }
             }
             // 点击折叠
             let collapse = """
@@ -379,6 +495,79 @@ struct HarnessWebView: NSViewRepresentable {
                 """
                 webView.evaluateJavaScript(measure) { result, _ in
                     Log.info("collapsed probe: \(result ?? "?")")
+                    // 折叠态附加几何（含 overlay）
+                    webView.evaluateJavaScript(collapsedExtra) { r2, _ in
+                        Log.info("collapsed extra: \(r2 ?? "?")")
+                        // 原生对照：临时移除 overlay 后重测（完成即恢复）
+                        webView.evaluateJavaScript(removeOverlayJS) { _, _ in
+                            webView.evaluateJavaScript(collapsedExtra) { r3, _ in
+                                Log.info("collapsed native: \(r3 ?? "?")")
+                                webView.evaluateJavaScript(restoreOverlayJS) { _, _ in
+                                    Log.info("overlay restored (collapsed)")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // MARK: - 拖拽自测（--probe-drag：合成鼠标事件验证拖拽带是否生效）
+
+        /// 在拖拽带内合成 mouseDown/Dragged/Up：真实 hitTest 链路下，
+        /// 窗口原点若发生变化说明拖拽带在最上层且拖动逻辑生效（结束后复位）。
+        private func probeDragSelfTest(_ webView: WKWebView) {
+            guard let window = webView.window else { return }
+            let origin0 = window.frame.origin
+            let h = window.frame.height
+            Log.info("dragtest: before=\(origin0) h=\(Int(h))")
+            // 窗口级 hitTest 审计：事件链路上谁在最上层
+            if let cv = window.contentView {
+                Log.info("dragtest: cv.isFlipped=\(cv.isFlipped) hit(400,14)=\(cv.hitTest(NSPoint(x: 400, y: 14)).map { String(describing: type(of: $0)) } ?? "nil") hit(400,\(Int(h) - 14))=\(cv.hitTest(NSPoint(x: 400, y: h - 14)).map { String(describing: type(of: $0)) } ?? "nil")")
+            }
+            if let theme = window.contentView?.superview {
+                Log.info("dragtest hittest theme(400,\(Int(h) - 14))=\(theme.hitTest(NSPoint(x: 400, y: h - 14)).map { String(describing: type(of: $0)) } ?? "nil")")
+            }
+            if let tb = window.standardWindowButton(.closeButton)?.superview {
+                Log.info("dragtest hittest titlebar(400,14)=\(tb.hitTest(NSPoint(x: 400, y: 14)).map { String(describing: type(of: $0)) } ?? "nil")")
+            }
+            func post(_ type: NSEvent.EventType, at p: NSPoint) {
+                guard let ev = NSEvent.mouseEvent(with: type, location: p, modifierFlags: [],
+                                                   timestamp: ProcessInfo.processInfo.systemUptime,
+                                                   windowNumber: window.windowNumber, context: nil,
+                                                   eventNumber: 0, clickCount: 1, pressure: 1) else {
+                    Log.info("dragtest: event create failed \(type.rawValue)")
+                    return
+                }
+                NSApp.postEvent(ev, atStart: false)
+            }
+            // 窗口坐标原点在左下：顶部拖拽带（距顶 14px）→ y = h - 14
+            let start = NSPoint(x: 400, y: h - 14)
+            post(.leftMouseDown, at: start)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                for i in 1...8 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.04) {
+                        post(.leftMouseDragged, at: NSPoint(x: CGFloat(400 + 10 * i), y: h - 14 + CGFloat(6 * i)))
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    post(.leftMouseUp, at: NSPoint(x: 480, y: h - 14 + 48))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        let moved = abs(window.frame.origin.x - origin0.x) > 2 || abs(window.frame.origin.y - origin0.y) > 2
+                        Log.info("dragtest: after=\(window.frame.origin) moved=\(moved)")
+                        window.setFrameOrigin(origin0)
+                        // postEvent 路由端到端验证：合成点击侧栏折叠按钮（240..268, 距顶 50）
+                        let p = NSPoint(x: 254, y: h - 50)
+                        post(.leftMouseDown, at: p)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            post(.leftMouseUp, at: p)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                webView.evaluateJavaScript("!!document.querySelector('.hHd-Xa_collapsed')") { r, _ in
+                                    Log.info("dragtest: postedClickCollapse=\(String(describing: r))")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

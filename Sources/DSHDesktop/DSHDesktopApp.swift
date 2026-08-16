@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import WebKit
 
 @main
 struct DSHDesktopApp: App {
@@ -125,6 +126,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                   window.title.hasPrefix("DSH Desktop") else { return }
             self?.layoutDragStrip(window)
         }
+        // 网页加载完成后把拖拽带重新置顶（SwiftUI 晚插入的 WKWebView 会盖住先加入的拖拽带）
+        NotificationCenter.default.addObserver(
+            forName: .dshWebViewLoaded, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let webView = notification.object as? WKWebView,
+                  let window = webView.window else { return }
+            self?.installDragStrip(in: window)
+        }
 
         // 窗口菜单补充：每次打开前确保系统级控制项在位
         ensureWindowMenu()
@@ -198,9 +207,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - 拖拽带（方案1：红绿灯右侧约 32 CSS px 透明拖拽）
 
     private func installDragStrip(in window: NSWindow) {
-        if let dragStrip, dragStrip.window === window { return }
+        guard let contentView = window.contentView else { return }
+        if let strip = dragStrip, strip.window === window {
+            // 拖拽带必须始终是 contentView 的最后一个子视图（最上层）：
+            // SwiftUI 在服务器就绪后插入的 WKWebView 会排到拖拽带之上，
+            // 导致拖拽带永远收不到鼠标事件（不可拖拽的根因）。
+            if contentView.subviews.last !== strip {
+                strip.removeFromSuperview()
+                contentView.addSubview(strip)
+                Log.info("drag strip: 重新置顶（WKWebView 曾盖住拖拽带）")
+            }
+            layoutDragStrip(window)
+            return
+        }
         let strip = DragStripView(frame: .zero)
-        window.contentView?.addSubview(strip)
+        contentView.addSubview(strip)
         dragStrip = strip
         layoutDragStrip(window)
     }
@@ -217,7 +238,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let axisFromTop = close.frame.midY
         // 轴线在行内垂直居中；行夹取在窗口可视范围内
         let stripTopFromTop = max(0, axisFromTop - rowHeight / 2)
-        let y = window.frame.height - stripTopFromTop - rowHeight
+        // 坐标系：NSHostingView 是 flipped（原点左上），拖拽带 frame.y 直接取
+        // 「距顶」；非 flipped 视图才用窗口高换算。此前按非 flipped 计算，
+        // 拖拽带被放到了窗口底部（实测 cv.isFlipped=true，y=847 = 底部）——
+        // 这是顶部不可拖拽的根因。
+        let y = contentView.isFlipped
+            ? stripTopFromTop
+            : window.frame.height - stripTopFromTop - rowHeight
         strip.frame = NSRect(
             x: 0,
             y: y,
@@ -274,4 +301,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 extension Notification.Name {
     static let dshReloadRequested = Notification.Name("dshReloadRequested")
+    static let dshWebViewLoaded = Notification.Name("dshWebViewLoaded")
 }

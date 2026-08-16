@@ -8,17 +8,18 @@ enum DesktopLayout {
     static let trafficLightInsetX: CGFloat = 16
     static let trafficLightInsetY: CGFloat = 18
 
-    /// 红绿灯右侧透明拖拽带宽度（方案1：约 32 CSS px）
-    static let dragStripWidth: CGFloat = 32
-    /// 顶部拖拽带高度（方案1：约 32 CSS px，覆盖 20px 标题预留量级）
+    /// 顶部拖拽带：红绿灯水平行整行（全宽），行高由红绿灯组件位置动态反推
+    /// （contentLayoutRect 差值，实测 28pt；轴线在行内垂直居中）
     static let dragStripHeight: CGFloat = 32
     /// 主内容顶部 caption/标题预留（方案1：约 20 CSS px；网页无预留时仅作对齐参照）
     static let captionStripHeight: CGFloat = 20
 
-    /// 折叠侧栏宽度：以红绿灯系统默认绝对位置为锚（左缘 12 × 2 + 组宽 54 = 78），
-    /// 使红绿灯在折叠侧栏内水平居中（方案1 原目标 90，按用户反馈以红绿灯为锚调整）
-    static let sidebarCollapsedWidth: CGFloat = 78
-    /// 官方折叠轨宽度（居中基准，方案1 表述）
+    /// 折叠侧栏视觉总宽：以红绿灯系统默认绝对位置为锚（实测左缘 7、右缘 61、组宽 54）：
+    /// 宽 = 红灯左距×2 + 组宽 = 68，使绿灯距右侧边框 = 红灯距左视窗框 = 7。
+    /// 实际宽度由 overlay 消费注入的 --dsh-traffic-left/--dsh-traffic-width 动态计算，
+    /// 此常量仅作文档参照。
+    static let sidebarCollapsedWidth: CGFloat = 68
+    /// 官方折叠轨宽度（56px 轨在 68px 侧栏内居中 → 轨中心 = 侧栏中心 = 黄灯中心 x=34）
     static let sidebarRailWidth: CGFloat = 56
 
     /// 红绿灯行高估算（用于侧栏顶部避让；实际以 standardWindowButton frame 动态计算优先）
@@ -37,13 +38,22 @@ final class DragStripView: NSView {
     override func mouseDown(with event: NSEvent) {
         dragStart = event.locationInWindow
         windowOrigin = window?.frame.origin ?? .zero
+        Log.info("dragstrip: mouseDown at=\(event.locationInWindow) origin=\(windowOrigin)")
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let window else { return }
+        guard let window else {
+            Log.info("dragstrip: mouseDragged but no window")
+            return
+        }
         let delta = NSPoint(x: event.locationInWindow.x - dragStart.x,
                             y: event.locationInWindow.y - dragStart.y)
         window.setFrameOrigin(NSPoint(x: windowOrigin.x + delta.x,
                                       y: windowOrigin.y + delta.y))
+        Log.info("dragstrip: mouseDragged at=\(event.locationInWindow) delta=\(delta) origin=\(window.frame.origin)")
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        Log.info("dragstrip: mouseUp at=\(event.locationInWindow)")
     }
 }

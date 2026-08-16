@@ -48,8 +48,9 @@ else
 fi
 
 # 4. 安全区：standardWindowButton 动态计算；无硬编码魔法数 78/80/52/56
+# （探测 JS 里的 slice(0, 80) 是字符串截断长度，与几何常量无关，排除）
 if grep -q 'standardWindowButton' "$SRC/WebView.swift"; then
-  if grep -wE '78|80|52|56' "$SRC/WebView.swift" >/dev/null; then
+  if grep -wE '78|80|52|56' "$SRC/WebView.swift" | grep -v 'slice(' | grep -q .; then
     check no_magic_traffic_light_constants 0 "WebView.swift 中存在硬编码 78/80/52/56"
   else
     check no_magic_traffic_light_constants 1 "安全区由 standardWindowButton 动态计算，无魔法数"

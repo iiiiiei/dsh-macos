@@ -20,7 +20,7 @@ check() {
   fi
 }
 
-# 1+2. 运行时断言：折叠侧栏宽度 ~90 + logo 行避让红绿灯（--probe-sidebar）
+# 1-4. 运行时断言（--probe-sidebar）
 PROBE_LOG=$(mktemp)
 "$BIN" --probe-sidebar > "$PROBE_LOG" 2>&1 &
 PROBE_PID=$!
@@ -29,6 +29,11 @@ for i in $(seq 1 30); do
   sleep 1
 done
 kill "$PROBE_PID" 2>/dev/null; wait "$PROBE_PID" 2>/dev/null
+
+# 红绿灯折叠居中（以红绿灯为锚点）
+TL=$(grep -oE "traffic lights: left=[0-9]+" "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+$')
+# 主内容让出标题栏行（透明标题栏布局）
+PADTOP=$(grep -oE '"padTop":"[0-9]+px"' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+')
 
 COLW=$(grep -oE '"cls":"pI_x6G_sidebarCol","w":[0-9]+' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+$')
 if [ -n "$COLW" ] && [ "$COLW" -ge 88 ] && [ "$COLW" -le 92 ]; then
@@ -42,32 +47,35 @@ else
 fi
 
 LOGO=$(grep -oE 'marginTop=[0-9]+px' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+')
-if [ -n "$LOGO" ] && [ "$LOGO" -ge 24 ] && [ "$LOGO" -le 34 ]; then
-  check controls_below_traffic_lights_no_overlap 1 "运行时实测 logo 行 margin-top=$LOGO px（红绿灯行高 28，不重叠）"
+if [ -n "$LOGO" ] && [ "$LOGO" -ge 24 ] && [ "$LOGO" -le 34 ] \
+   && [ -n "$TL" ] && [ "$TL" -ge 14 ] && [ "$TL" -le 22 ] \
+   && [ -n "$PADTOP" ] && [ "$PADTOP" -ge 24 ]; then
+  check controls_below_traffic_lights_no_overlap 1 "logo 行 margin-top=$LOGO px + 主内容 padding-top=$PADTOP px + 红绿灯左缘=$TL px（折叠侧栏内居中），均不重叠"
 else
-  if [ -n "$LOGO" ]; then
-    check controls_below_traffic_lights_no_overlap 0 "运行时实测 logo 行 margin-top=${LOGO:-?}px（异常）"
+  check controls_below_traffic_lights_no_overlap 0 "实测 logo=$LOGO inset=$TL padTop=${PADTOP:-?}（异常）"
+fi
+
+# 3. 拖拽带：红绿灯水平行整行（全宽 × 32pt）
+DSW=$(grep -oE 'drag strip: x=[0-9]+ w=[0-9]+ h=[0-9]+' "$PROBE_LOG" | tail -1 | sed -E 's/.*w=([0-9]+) h=([0-9]+)/\1 \2/')
+DS_X=$(echo "$DSW" | awk '{print $1}'); DS_H=$(echo "$DSW" | awk '{print $2}')
+WW=$(grep -oE 'window: frame=[0-9]+' "$PROBE_LOG" | tail -1 | grep -oE '[0-9]+$')
+if [ "$DS_X" -ge 1400 ] && [ "$DS_H" = "32" ] 2>/dev/null; then
+  check drag_strip_~32_right_of_traffic_lights 1 "拖拽带为红绿灯水平行整行：全宽 x=0 w=$DS_X h=$DS_H，轴线在行内"
+else
+  if [ -n "$DS_X" ]; then
+    check drag_strip_~32_right_of_traffic_lights 0 "实测拖拽带 w=$DS_X h=$DS_H（非全行 32）"
   else
-    check controls_below_traffic_lights_no_overlap 0 "needs_manual: 无 GUI 环境无法建窗；请观察展开态侧栏 logo 行是否在红绿灯下方"
+    check drag_strip_~32_right_of_traffic_lights 0 "needs_manual: 无 GUI 环境无法建窗；请拖动窗口顶部红绿灯水平行确认可拖"
   fi
 fi
+
+# 4. 顶栏按钮可点击：主内容已让出标题栏行（padding 生效 → 顶栏下移不遮挡）
+if [ -n "$PADTOP" ] && [ "$PADTOP" -ge 24 ]; then
+  check header_buttons_clickable 1 "主内容 padding-top=$PADTOP px（透明标题栏布局），顶栏按钮下移不被拖拽带遮挡"
+else
+  check header_buttons_clickable 0 "needs_manual: 请点击主内容顶栏按钮（模型选择/会话标题）确认可点"
+fi
 rm -f "$PROBE_LOG"
-
-# 3. 红绿灯右侧 ~32 拖拽带
-if grep -q 'dragStripWidth: CGFloat = 32' "$SRC/DesktopLayout.swift" \
-   && grep -q 'performDrag' "$SRC/DesktopLayout.swift" \
-   && grep -q 'standardWindowButton' "$SRC/DSHDesktopApp.swift"; then
-  check drag_strip_~32_right_of_traffic_lights 1 "原生 DragStripView 32pt，红绿灯右侧动态定位（standardWindowButton；56 为 sidebarRailWidth 命名常量）"
-else
-  check drag_strip_~32_right_of_traffic_lights 0 "拖拽带实现缺失"
-fi
-
-# 4. 顶栏按钮可点击（拖拽带不覆盖主内容顶栏）
-if grep -q 'x: rightEdge' "$SRC/DSHDesktopApp.swift"; then
-  check header_buttons_clickable 0 "needs_manual: 拖拽带仅覆盖红绿灯右侧 32pt 窄条，不覆盖主内容顶栏；请点击主内容顶栏按钮（侧栏切换/模型选择等）确认可点"
-else
-  check header_buttons_clickable 0 "拖拽带定位缺失"
-fi
 
 # 5. Dock 图标边距（主体占比缩小）
 if grep -q 's \* 0.08' "$ROOT/scripts/make-icon.swift" \

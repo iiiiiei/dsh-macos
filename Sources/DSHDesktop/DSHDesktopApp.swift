@@ -159,8 +159,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 window.titlebarSeparatorStyle = .automatic
             }
             fullSizeApplied = true
-            // 拖拽带：红绿灯右侧约 32pt（对齐方案1），原生 performDrag
+            // 拖拽带：红绿灯水平行整行可拖（原生 performDrag）
             installDragStrip(in: window)
+            // 红绿灯在折叠侧栏内水平居中（以红绿灯为锚点）
+            centerTrafficLights(in: window)
         }
         if fullSizeApplied {
             Log.info("window: 沉浸式标题栏 = \(immersive ? "开（顶到顶）" : "关（标准标题栏）")")
@@ -204,21 +206,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         layoutDragStrip(window)
     }
 
+    /// 拖拽带：红绿灯水平行整行（全宽），红绿灯轴线在行内垂直居中。
+    /// 行高 32pt（对齐方案1），行上下边距相等 → 轴线居中。
     private func layoutDragStrip(_ window: NSWindow) {
         guard let strip = dragStrip, let contentView = window.contentView else { return }
-        guard let close = window.standardWindowButton(.closeButton),
-              let zoom = window.standardWindowButton(.zoomButton) else { return }
-        // 红绿灯实际 frame（动态计算，不散落魔法数）；按钮坐标从所在视图转换到内容视图
-        let closeFrame = close.superview.map { contentView.convert(close.frame, from: $0) } ?? close.frame
-        let zoomFrame = zoom.superview.map { contentView.convert(zoom.frame, from: $0) } ?? zoom.frame
-        let rightEdge = max(closeFrame.maxX, zoomFrame.maxX) + 6
-        // contentView 坐标系原点在左下：顶部 y = maxY - 高度
+        guard let close = window.standardWindowButton(.closeButton) else { return }
+        // 红绿灯轴线距窗口顶（按钮 frame 为 flipped 坐标系，midY 即距顶）
+        let axisFromTop = close.frame.midY
+        // 轴线尽量居中于拖拽带；拖拽带夹取在窗口可视范围内
+        let stripTopFromTop = max(0, axisFromTop - DesktopLayout.dragStripHeight / 2)
+        let y = window.frame.height - stripTopFromTop - DesktopLayout.dragStripHeight
         strip.frame = NSRect(
-            x: rightEdge,
-            y: contentView.bounds.maxY - DesktopLayout.dragStripHeight,
-            width: DesktopLayout.dragStripWidth,
+            x: 0,
+            y: y,
+            width: contentView.bounds.width,
             height: DesktopLayout.dragStripHeight
         )
+        Log.info("drag strip: x=\(Int(strip.frame.minX)) w=\(Int(strip.frame.width)) h=\(Int(strip.frame.height)) axisFromTop=\(Int(axisFromTop))")
+    }
+
+    /// 红绿灯在折叠侧栏（90px）内水平居中：以红绿灯绝对位置为锚点，
+    /// 组左缘 = (侧栏宽 - 红绿灯组宽) / 2；按钮间相对位置保持不变
+    private func centerTrafficLights(in window: NSWindow) {
+        guard let close = window.standardWindowButton(.closeButton),
+              let mini = window.standardWindowButton(.miniaturizeButton),
+              let zoom = window.standardWindowButton(.zoomButton) else { return }
+        let groupWidth = zoom.frame.maxX - close.frame.minX
+        let targetLeft = max(8, (DesktopLayout.sidebarCollapsedWidth - groupWidth) / 2)
+        let delta = targetLeft - close.frame.minX
+        guard abs(delta) > 0.5 else { return }
+        for button in [close, mini, zoom] {
+            var frame = button.frame
+            frame.origin.x += delta
+            button.setFrameOrigin(frame.origin)
+        }
+        Log.info("traffic lights: left=\(Int(targetLeft)) groupWidth=\(Int(groupWidth))（折叠侧栏内居中）")
     }
 
     private func mainWindow() -> NSWindow? {

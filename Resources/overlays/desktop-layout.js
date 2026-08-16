@@ -19,6 +19,12 @@
     ".hHd-Xa_logoRow { margin-top: var(--dsh-traffic-inset, 28px) !important; }",
     // 折叠态：侧栏 56 → 90（方案1 对齐；内部 56px 轨随 flex 布局居中）
     ".pI_x6G_sidebarCol:has(.hHd-Xa_collapsed) { width: 90px !important; }",
+    // 主内容区让出透明标题栏行（拖拽带高度）
+    ".pI_x6P_centerCol, .pI_x6G_centerCol { padding-top: var(--dsh-traffic-inset, 28px) !important; }",
+    // 会话选中框右对齐（与 logo 行内容右缘一致，侧栏 280 - 左右 12 = 256）
+    ".YDXeBa_sessionRow.YDXeBa_selected { box-sizing: border-box !important; width: 256px !important; }",
+    // 折叠态设置图标在底部区域内垂直居中
+    ".hHd-Xa_settingsArea { display: flex !important; align-items: center !important; justify-content: center !important; }",
   ].join("\n");
   document.head.appendChild(style);
 })();

@@ -226,7 +226,37 @@ struct HarnessWebView: NSViewRepresentable {
             webView.evaluateJavaScript(js) { result, _ in
                 Log.info("sidebar probe: \(result ?? "?")")
             }
-            // 第二轮：模拟点击折叠按钮后输出折叠态侧栏容器
+            // 展开态：主内容容器 + 会话选中项（aria-selected / active / selected）
+            let expanded = """
+            (function () {
+              var out = {};
+              var all = document.querySelectorAll('div');
+              var main = null;
+              for (var i = 0; i < all.length; i++) {
+                var r = all[i].getBoundingClientRect();
+                if (r.width > window.innerWidth * 0.5 && r.left > 200 && r.top >= 0 && r.top < 60 && r.height > 200) {
+                  if (!main || r.width < main.r.width) { main = { el: all[i], r: r }; }
+                }
+              }
+              if (main) out.main = { cls: String(main.el.className).slice(0, 80), w: Math.round(main.r.width), t: Math.round(main.r.top), padTop: getComputedStyle(main.el).paddingTop };
+              var items = document.querySelectorAll('[aria-selected="true"], [class*="active"], [class*="selected"]');
+              var active = null;
+              for (var j = 0; j < items.length; j++) {
+                var rr = items[j].getBoundingClientRect();
+                if (rr.width > 50 && rr.height > 20 && rr.left < 300) {
+                  var cs = getComputedStyle(items[j]);
+                  active = { cls: String(items[j].className).slice(0, 90), w: Math.round(rr.width), l: Math.round(rr.left), r: Math.round(rr.right), t: Math.round(rr.top), pos: cs.position, csW: cs.width };
+                  break;
+                }
+              }
+              if (active) out.active = active;
+              return JSON.stringify(out);
+            })();
+            """
+            webView.evaluateJavaScript(expanded) { result, _ in
+                Log.info("layout probe: \(result ?? "?")")
+            }
+            // 点击折叠
             let collapse = """
             (function () {
               var btns = document.querySelectorAll('button');
@@ -244,7 +274,7 @@ struct HarnessWebView: NSViewRepresentable {
             webView.evaluateJavaScript(collapse) { result, _ in
                 Log.info("collapse probe: \(result ?? "?")")
             }
-            // 展开态 logo 行避让实测（layout overlay 注入后 margin-top）
+            // 展开态 logo 行避让实测
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 let logo = """
                 (function () {
@@ -258,19 +288,50 @@ struct HarnessWebView: NSViewRepresentable {
                     Log.info("logo probe: \(result ?? "?")")
                 }
             }
+            // 折叠态：侧栏宽度 + 底部图标几何
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 let measure = """
                 (function () {
-                  var cols = document.querySelectorAll('div');
                   var out = [];
+                  var cols = document.querySelectorAll('div');
                   for (var i = 0; i < cols.length; i++) {
                     var c = cols[i].className;
                     var r = cols[i].getBoundingClientRect();
                     if (typeof c === 'string' && /sidebarCol|rail/i.test(c) && r.width > 0) {
-                      out.push({ cls: c.slice(0, 80), w: Math.round(r.width), t: Math.round(r.top) });
+                      out.push({ cls: c.slice(0, 80), w: Math.round(r.width), l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top) });
                     }
                   }
-                  return JSON.stringify(out.slice(0, 6));
+                  var rail = document.querySelector('.hHd-Xa_railIn') || document.querySelector('[class*="railIn"]');
+                  if (rail && rail.children.length) {
+                    var last = rail.children[rail.children.length - 1];
+                    var lr = last.getBoundingClientRect();
+                    out.push({ bottom: { cls: String(last.className).slice(0, 70), w: Math.round(lr.width), l: Math.round(lr.left), r: Math.round(lr.right), t: Math.round(lr.top), b: Math.round(lr.bottom), h: Math.round(lr.height) } });
+                    // footArea 内部结构（图标定位方式）
+                    var kids = last.children;
+                    for (var k = 0; k < kids.length; k++) {
+                      var kr = kids[k].getBoundingClientRect();
+                      out.push({ footChild: { cls: String(kids[k].className).slice(0, 60), w: Math.round(kr.width), h: Math.round(kr.height), t: Math.round(kr.top), b: Math.round(kr.bottom), l: Math.round(kr.left) } });
+                      // settingsArea 内图标几何
+                      if (/settings/i.test(String(kids[k].className))) {
+                        var inner = kids[k].querySelector('svg, button, [class*="icon"]');
+                        if (inner) {
+                          var ir = inner.getBoundingClientRect();
+                          out.push({ settingsIcon: { cls: String(inner.className).slice(0, 50), t: Math.round(ir.top), b: Math.round(ir.bottom), h: Math.round(ir.height), areaH: Math.round(kr.height) } });
+                        }
+                      }
+                    }
+                  }
+                  // 折叠态顶部 0-40px 的可点击元素（拖拽带避让判断）
+                  var topEls = document.querySelectorAll('button, a, [role="button"]');
+                  var tops = [];
+                  for (var m = 0; m < topEls.length; m++) {
+                    var tr = topEls[m].getBoundingClientRect();
+                    if (tr.top < 40 && tr.top >= 0 && tr.left < 200) {
+                      tops.push({ cls: String(topEls[m].className).slice(0, 60), t: Math.round(tr.top), b: Math.round(tr.bottom), w: Math.round(tr.width), aria: topEls[m].getAttribute('aria-label') || '' });
+                    }
+                  }
+                  if (tops.length) out.push({ topButtons: tops });
+                  return JSON.stringify(out);
                 })();
                 """
                 webView.evaluateJavaScript(measure) { result, _ in

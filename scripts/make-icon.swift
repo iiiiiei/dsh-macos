@@ -30,35 +30,48 @@ let specs: [(name: String, size: Int)] = [
     ("icon_512x512@2x.png", 1024),
 ]
 
-/// 应用图标：白色圆角底 + 黑色鲸鱼（参考官方 iOS 应用图标：白底、鲸鱼居中、留白均衡）
+/// 以精确像素尺寸渲染到位图（显式 NSBitmapImageRep，避免 lockFocus 在 Retina 下的 2x 膨胀）
+func renderPixels(size: Int, draw: (CGContext, CGFloat) -> Void) -> NSBitmapImageRep {
+    let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+    )!
+    rep.size = NSSize(width: size, height: size) // 1x 逻辑尺寸，像素即声明值
+    NSGraphicsContext.saveGraphicsState()
+    let ctx = NSGraphicsContext(bitmapImageRep: rep)!
+    NSGraphicsContext.current = ctx
+    draw(ctx.cgContext, CGFloat(size))
+    ctx.flushGraphics()
+    NSGraphicsContext.restoreGraphicsState()
+    return rep
+}
+
+/// 应用图标：方图画布 + 圆角白底 + 黑色鲸鱼（内容居中留白，圆角可见）
 func renderAppIcon(size: Int) -> NSImage {
-    let image = NSImage(size: NSSize(width: size, height: size))
-    image.lockFocus()
-    defer { image.unlockFocus() }
-    guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
-    let s = CGFloat(size)
+    let rep = renderPixels(size: size) { ctx, s in
+        // 圆角白底：透明边距 4%，圆角 20%（系统叠加图标遮罩后观感接近官方 iOS 图标）
+        let inset = s * 0.04
+        let bgRect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
+        let corner = s * 0.20
+        ctx.addPath(CGPath(roundedRect: bgRect, cornerWidth: corner, cornerHeight: corner, transform: nil))
+        ctx.clip()
+        NSColor.white.setFill()
+        bgRect.fill()
+        ctx.resetClip()
 
-    // 方图画布 + 圆角白底：透明边距让圆角在任意背景下可见（避免纯白方块观感）。
-    // 系统仍会叠加一层图标遮罩，双重圆角观感接近官方 iOS 图标。
-    let inset = s * 0.04
-    let bgRect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let corner = s * 0.20
-    ctx.addPath(CGPath(roundedRect: bgRect, cornerWidth: corner, cornerHeight: corner, transform: nil))
-    ctx.clip()
-    NSColor.white.setFill()
-    bgRect.fill()
-    ctx.resetClip()
-
-    // 黑色鲸鱼：居中，高度约占 64%，上下左右留白均衡
-    let whaleSize = s * 0.64
-    let whaleRect = NSRect(
-        x: (s - whaleSize) / 2,
-        y: (s - whaleSize) / 2,
-        width: whaleSize,
-        height: whaleSize
-    )
-    svg.draw(in: whaleRect)
-
+        // 黑色鲸鱼：居中，高度约占 64%
+        let whaleSize = s * 0.64
+        let whaleRect = NSRect(
+            x: (s - whaleSize) / 2,
+            y: (s - whaleSize) / 2,
+            width: whaleSize,
+            height: whaleSize
+        )
+        svg.draw(in: whaleRect)
+    }
+    let image = NSImage(size: rep.size)
+    image.addRepresentation(rep)
     return image
 }
 
@@ -75,16 +88,14 @@ for spec in specs {
     print("wrote \(url.path) (\(spec.size)x\(spec.size))")
 }
 
-// 菜单栏模板图标：36x36 黑色鲸鱼（alpha 形状，模板渲染自动适配深浅色）
-let menuImage = NSImage(size: NSSize(width: 36, height: 36))
-menuImage.lockFocus()
-svg.draw(in: NSRect(x: 0, y: 0, width: 36, height: 36))
-menuImage.unlockFocus()
-guard let tiff = menuImage.tiffRepresentation,
-      let rep = NSBitmapImageRep(data: tiff),
-      let png = rep.representation(using: .png, properties: [:]) else {
+// 菜单栏模板图标：36x36 像素（逻辑 18pt，@2x），黑色鲸鱼 alpha 形状
+let menuRep = renderPixels(size: 36) { ctx, s in
+    svg.draw(in: NSRect(x: 0, y: 0, width: s, height: s))
+}
+menuRep.size = NSSize(width: 18, height: 18)
+guard let png = menuRep.representation(using: .png, properties: [:]) else {
     FileHandle.standardError.write("failed to render menubar icon\n".data(using: .utf8)!)
     exit(1)
 }
 try png.write(to: URL(fileURLWithPath: menubarPng))
-print("wrote \(menubarPng) (menubar template)")
+print("wrote \(menubarPng) (menubar template 36px/18pt)")

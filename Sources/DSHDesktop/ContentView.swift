@@ -32,6 +32,9 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 960, minHeight: 640)
+        // 顶到顶：内容忽略 safe area（否则 SwiftUI 会把 WebView 从标题栏下方排布，
+        // 顶部露出窗口背景色横条）
+        .ignoresSafeArea()
         .onAppear {
             bootstrap()
             // 沉浸式：内容延伸到标题栏区域（配合 hiddenTitleBar 真正顶到顶）

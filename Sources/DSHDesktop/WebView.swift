@@ -133,6 +133,10 @@ struct HarnessWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Log.info("webview: didFinish title=\(webView.title ?? "-")")
+            // 运行时断言：WebView 是否覆盖到窗口顶边（顶到顶的最终判定）
+            DispatchQueue.main.async {
+                Log.info("webview: frame=\(Int(webView.frame.minY)),\(Int(webView.frame.height)) edgeTop=\(webView.frame.minY <= 1)")
+            }
             syncEnhancements(webView)
             isLoading = false
             hasLoadedOnce = true

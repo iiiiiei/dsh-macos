@@ -24,17 +24,18 @@ check() {
 GEO_LOG=$(mktemp)
 "$BIN" > "$GEO_LOG" 2>&1 &
 APP_PID=$!
-for i in $(seq 1 12); do
-  grep -q "edgeToEdge=" "$GEO_LOG" && break
+for i in $(seq 1 15); do
+  if grep -q "edgeTop=" "$GEO_LOG"; then break; fi
   sleep 1
 done
 kill "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null
 EDGE=$(grep -oE "edgeToEdge=(true|false)" "$GEO_LOG" | tail -1)
-if [ "$EDGE" = "edgeToEdge=true" ]; then
-  check window_edge_to_edge_runtime 1 "实测 contentView 高度 == window 高度（$EDGE），内容覆盖到窗口顶边"
+TOP=$(grep -oE "edgeTop=(true|false)" "$GEO_LOG" | tail -1)
+if [ "$EDGE" = "edgeToEdge=true" ] && [ "$TOP" = "edgeTop=true" ]; then
+  check window_edge_to_edge_runtime 1 "contentView 全尺寸（$EDGE）且 WebView 覆盖到窗口顶边（$TOP）"
 else
-  if grep -q "edgeToEdge=" "$GEO_LOG"; then
-    check window_edge_to_edge_runtime 0 "实测 $EDGE"
+  if [ -n "$EDGE" ] || [ -n "$TOP" ]; then
+    check window_edge_to_edge_runtime 0 "实测 $EDGE $TOP（contentView 或 WebView 未到顶）"
   else
     check window_edge_to_edge_runtime 0 "needs_manual: 无 GUI 环境无法建窗；请在桌面会话运行 $BIN 后观察红绿灯悬浮"
   fi

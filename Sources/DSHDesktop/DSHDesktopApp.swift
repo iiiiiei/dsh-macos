@@ -154,6 +154,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if fullSizeApplied {
             Log.info("window: 沉浸式标题栏 = \(immersive ? "开（顶到顶）" : "关（标准标题栏）")")
         }
+        // 运行时几何断言：contentView 是否覆盖到窗口顶部（用于自动验证）
+        if let window = NSApp.windows.first(where: { $0.title.hasPrefix("DSH Desktop") }) {
+            let wf = window.frame
+            let cf = window.contentView?.frame ?? .zero
+            Log.info("window: frame=\(Int(wf.height)) contentView=\(Int(cf.height)) edgeToEdge=\(Int(cf.height) >= Int(wf.height) - 1)")
+        }
     }
 
     // MARK: - 窗口菜单补充（SwiftUI 只保留最小化/缩放/前置全部窗口/窗口列表）

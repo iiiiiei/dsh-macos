@@ -35,7 +35,6 @@ struct SettingsView: View {
                 Text("Official 为默认外观（零覆盖）；皮肤类外观基于 Official 叠加 Overlay。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Toggle("沉浸式标题栏（红绿灯悬浮、内容顶到顶）", isOn: $appState.immersiveTitlebar)
                 Toggle("中文通俗说明（翻译固定 UI，聊天内容不受影响）", isOn: $appState.zhOverlay)
             }
 

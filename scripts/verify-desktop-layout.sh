@@ -67,8 +67,8 @@ else
 fi
 
 # 红绿灯：原生按钮尺寸/间距不改，只校准到 Codex/参考外壳中心锚点 16pt,16pt。
-if grep -q 'traffic aligned:.*targetCenter=(23,24)' "$PROBE_LOG"; then
-  check traffic_lights_codex_anchor 1 "原生红绿灯已对齐到中心锚点 (23,24)，按钮尺寸/间距由 AppKit 保留"
+if grep -q 'traffic aligned:.*targetCenter=(23,23)' "$PROBE_LOG"; then
+  check traffic_lights_codex_anchor 1 "原生红绿灯已对齐到中心锚点 (23,23)，按钮尺寸/间距由 AppKit 保留"
 else
   check traffic_lights_codex_anchor 0 "未找到 traffic aligned 运行时断言（需要在桌面会话重新运行探针）"
 fi

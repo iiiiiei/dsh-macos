@@ -1,3 +1,11 @@
+#!/bin/bash
+# 最终清理：重写 README（基于最新代码真相）→ 删 .research + i18n 死脚本 → 修 verify 锚点 → 提交推送 → 同步 Desktop
+# 在你的终端运行（Desktop 受 TCC 保护）
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "==> [1/6] 重写 README.md"
+cat > README.md << 'README_EOF'
 # DSH Desktop —— DeepSeek Harness 的 macOS 桌面应用
 
 把 DeepSeek Harness 变成一台真正的桌面应用：**原生 macOS 外壳（SwiftUI + AppKit）+ WKWebView 内嵌官方 Web GUI + 服务器生命周期管理 + 原生通知**，全部构建在 DSH 插件生态之上，不重写任何 UI。
@@ -191,3 +199,51 @@ cp -R bridge/dsh-desktop-bridge ~/.dsh/profiles/node_modules/dsh-desktop-bridge
 
 - 桥接插件改动：改 `bridge/dsh-desktop-bridge/lib/index.js` 后重新拷贝到 profile 的 node_modules 并重启服务器
 - dsh 版本升级：更新 `@deepseek-ai/dsh` 后重启服务器即可，外壳代码无需适配（rc.7 验证过）
+README_EOF
+echo "OK   README.md 已按最新代码重写"
+
+echo "==> [2/6] 删除 .research + i18n 死脚本"
+rm -rf .research
+rm -f scripts/i18n-patch.py scripts/i18n-patch.sh scripts/i18n-scan.py
+echo "OK   已删除 .research/ 与 3 个 i18n 脚本"
+
+echo "==> [3/6] 修正 verify-desktop-layout.sh 红绿灯锚点 (23,24)→(23,23)"
+python3 << 'PYEOF'
+import pathlib
+p = pathlib.Path('scripts/verify-desktop-layout.sh')
+t = p.read_text()
+t = t.replace("traffic aligned:.*targetCenter=(23,24)", "traffic aligned:.*targetCenter=(23,23)")
+t = t.replace("已对齐到中心锚点 (23,24)", "已对齐到中心锚点 (23,23)")
+p.write_text(t)
+print("OK   锚点已修正")
+PYEOF
+
+echo "==> [4/6] git 删除 + 提交 + 推送"
+git add -A
+git status --short | head -15
+git commit -m "$(cat <<'MSG'
+docs: 重写 README 对齐最新代码（86px/锚点23,23/原生通知/无token统计）；删除残留 .research 协议笔记与 i18n 死脚本；修正 verify 红绿灯锚点
+
+- README：按最新真相重写（折叠侧栏 86px、红绿灯锚点 (23,23)、拖拽带 46px、原生通知、无 token 统计、桥接仅 status）
+- 删除 .research/dsh-protocol.md（token 统计遗留协议笔记，无引用）
+- 删除 scripts/i18n-patch.*、i18n-scan.py（汉化已删，无引用）
+- verify-desktop-layout.sh：红绿灯锚点校验 (23,24)→(23,23)
+MSG
+)" || echo "无待提交改动"
+git push origin HEAD || echo "!! 推送失败，请手动: git push"
+
+echo "==> [5/6] 同步到 ~/Desktop/dsh-macos"
+SRC="$(pwd)"
+DST="$HOME/Desktop/dsh-macos"
+if [ -d "$DST" ]; then
+  rsync -a --delete \
+    --exclude='.build/' --exclude='build/' --exclude='.DS_Store' \
+    --exclude='*.removed' \
+    "$SRC/" "$DST/"
+  echo "OK   $DST 已同步（含新 README、无 .research、无 i18n）"
+else
+  echo "!! $DST 不存在，跳过同步"
+fi
+
+echo "==> [6/6] 完成"
+git status -sb | head -1

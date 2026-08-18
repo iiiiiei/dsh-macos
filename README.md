@@ -25,6 +25,7 @@
 - **Desktop 布局对齐**：以红绿灯作为不可变参考系——红绿灯组整体平移到中心锚点 (23,23)、不改按钮相对位置；折叠侧栏宽 86px（灯组中心 x=43 在侧栏水平中心）；官方 56px 轨居中；透明拖拽带行高 46px（红绿灯垂直居中）；展开/折叠态 logo 行下边界对齐右侧会话顶栏
 - **自动验证**：`bash scripts/verify-desktop-appearance.sh`（窗口 flags/可逆、无魔法数、WebView 透明、图标、无轮询）+ `bash scripts/verify-desktop-layout.sh`（布局对齐运行时断言）
 - **冷启动优化**：命令解析结果缓存、launchd 环境零 PATH 依赖
+- **更新检查**：设置 → 关于内置“检查 DSH 更新”与“检查应用更新”。DSH 更新先联网查询 `@deepseek-ai/dsh@latest` 并与当前对比：无新版不停服直接提示；有新版弹确认框，确认后才停服 → npx 拉取 → 自动重启。应用更新经 GitHub Releases 对比 tag 与本地版本后提示下载。
 
 ## 架构
 
@@ -138,6 +139,15 @@ open "build/DSH Desktop.app"
 | 退出时保持服务器 | 关 | 退出应用时是否带走应用自己启动的服务器 |
 | 开机自动启动 | 关 | SMAppService；要求应用在 /Applications 且签名有效 |
 
+### 更新
+
+设置 → 关于 提供两个更新入口：
+
+- **检查 DSH 更新**：先联网查询 `@deepseek-ai/dsh@latest` 并与当前已装版本对比。无新版直接提示“已是最新版本”，**不停服**；有新版则弹出确认框，点“现在更新并重启”后才执行 `停服 → npx 拉取 → 自动重启`。
+- **检查应用更新**：读取 GitHub Releases 的最新 tag 并与本地版本对比，只提示、不自动安装。
+
+> 版本解析：从 `resolvedServerCommand` 逐 token 找到 dsh 的绝对 bin 路径，再向上逐级定位 `package.json` 读取 `version`（兼容 npx 缓存 `…/@deepseek-ai/dsh/lib/bin.js` 与全局 bin 软链）。
+
 ## 桥接插件（dsh-desktop-bridge）
 
 一个普通的 Cordis 宿主插件，注册 exact 路由（优先于 `/api` prefix 路由，不影响浏览器 RPC）：
@@ -185,7 +195,7 @@ cp -R bridge/dsh-desktop-bridge ~/.dsh/profiles/node_modules/dsh-desktop-bridge
 
 - [ ] Developer ID 签名与公证，正式分发 + 开机自启
 - [ ] 打包 node + dsh 运行时，脱离系统 dsh 独立运行（零依赖分发）
-- [ ] 跟随官方 dsh 版本升级（当前 rc.7）
+- [x] 设置页一键检查/更新：DSH 更新先查后问、应用更新走 GitHub Releases（当前 rc.7）
 
 ## 开发
 

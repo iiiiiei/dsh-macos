@@ -54,7 +54,7 @@ final class ServerManager: ObservableObject {
         lastCommand = appState.serverCommand
 
         let command = appState.serverCommand
-        let port = appState.port
+        let port = AppState.defaultPort
 
         Task {
             do {
@@ -236,6 +236,130 @@ final class ServerManager: ObservableObject {
         }
 
         throw ServerError.unresolvedCommand(trimmed)
+    }
+
+    // MARK: - 更新
+
+    /// 当前配置的 dsh 版本（从缓存的 package.json 读取）；nil = 未解析/不存在
+    var currentDSHVersion: String? {
+        let cached = UserDefaults.standard.string(forKey: "resolvedServerCommand")
+        guard let cached else { return nil }
+        // 命令形如 “node <绝对 bin 路径> --profile web”，bin 不一定是最后一个 token，
+        // 因此遍历每个绝对路径 token，找到能向上定位到 package.json 的那个。
+        for token in cached.split(separator: " ").map(String.init) where token.hasPrefix("/") {
+            var resolvedPath = token
+            if let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: token),
+               dest.hasPrefix("/") {
+                resolvedPath = dest
+            }
+            var dir = URL(fileURLWithPath: resolvedPath).deletingLastPathComponent()
+            for _ in 0..<6 {
+                let candidate = dir.appendingPathComponent("package.json")
+                if FileManager.default.fileExists(atPath: candidate.path),
+                   let data = try? Data(contentsOf: candidate),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let version = json["version"] as? String {
+                    return version
+                }
+                let parent = dir.deletingLastPathComponent()
+                guard parent.path != dir.path else { break }
+                dir = parent
+            }
+        }
+        return nil
+    }
+
+    /// 联网查询最新 dsh 版本号（纯查询，不改动服务器、不会触发重启）。
+    /// 注意：.app 从 Dock/Launchpad 启动时 PATH 只有系统目录，
+    /// 所以必须用绝对 npx 并注入 Homebrew bin，否则找不到 npx。
+    private func fetchLatestDSHVersion() async throws -> String {
+        let npxCandidates = ["/opt/homebrew/bin/npx", "/usr/local/bin/npx", "/usr/bin/npx", "/bin/npx"]
+        guard let npx = npxCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw NSError(domain: "update", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "未找到 npx（请确保已安装 Node.js）"])
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: npx)
+        process.arguments = ["--yes", "@deepseek-ai/dsh@latest", "--version"]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+        process.environment = env
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard process.terminationStatus == 0, !out.isEmpty else {
+            throw NSError(domain: "update", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "npx 拉取失败，请检查网络"])
+        }
+        return out
+    }
+
+    /// 检查 dsh 是否有新版：联网查询最新版本，与当前已装版本对比。
+    /// 有新版本回传版本号，没有新版回传 nil（此时不进入更新/重启流程）。
+    func checkDSHUpdate(_ callback: @escaping @MainActor (Result<String?, Error>) -> Void) {
+        Task {
+            do {
+                let latest = try await fetchLatestDSHVersion()
+                await MainActor.run {
+                    if let current = self.currentDSHVersion, current == latest {
+                        callback(.success(nil)) // 无新版
+                    } else {
+                        callback(.success(latest)) // 有新版本（或当前版本未解析，视为可更新）
+                    }
+                }
+            } catch {
+                await MainActor.run { callback(.failure(error)) }
+            }
+        }
+    }
+
+    /// 执行 DSH 更新并自动重启后端：停服 → 清解析缓存 → npx 拉最新 → 重启。
+    /// 应在 checkDSHUpdate 确认有新版后再调用；完成后回调 Result<版本号, Error>。
+    func applyDSHUpdate(_ callback: @escaping @MainActor (Result<String, Error>) -> Void) {
+        if serverProcess != nil { stopAndWait() }
+        // 清缓存，强制下次重扫到 npx 刚拉取的最新缓存
+        UserDefaults.standard.removeObject(forKey: "resolvedServerCommand")
+        status = .stopped
+        Task {
+            do {
+                let version = try await fetchLatestDSHVersion()
+                await MainActor.run {
+                    // 自动收尾：清解析缓存 + 重启，避免用户手动重启仍用旧缓存
+                    UserDefaults.standard.removeObject(forKey: "resolvedServerCommand")
+                    self.status = .stopped
+                    self.forwardStart()
+                    callback(.success(version))
+                }
+            } catch {
+                await MainActor.run { callback(.failure(error)) }
+            }
+        }
+    }
+
+    /// 更新收尾时调用：等价于一次干净的 start()，但跳过端口预检的 attach 分支，
+    /// 确保用 npx 刚拉取的最新缓存 spawn 新进程。
+    private func forwardStart() {
+        guard serverProcess == nil else { return }
+        stopping = false
+        status = .starting
+        let command = appState.serverCommand
+        let port = AppState.defaultPort
+        Task {
+            do {
+                let resolved = try await Self.resolveCommand(command)
+                guard self.serverProcess == nil else { return }
+                // 更新场景：直接冷启动到最新缓存，不做端口 attach（端口应先已释放）
+                try self.spawn(resolved: resolved, port: port)
+                Self.cacheResolved(resolved)
+                self.startPolling()
+            } catch {
+                self.status = .error("重启失败：\(error.localizedDescription)")
+            }
+        }
     }
 
     /// 在 ~/.npm/_npx/<hash>/node_modules/@deepseek-ai/dsh/lib/bin.js 中

@@ -47,7 +47,8 @@ final class AppState: ObservableObject {
 
     // MARK: - 设置（UserDefaults 持久化）
 
-    @Published var port: Int
+    /// DSH 后端固定监听端口（不可改，避免误改导致连不上后端）
+    static let defaultPort = 3080
     @Published var serverCommand: String
     @Published var autoStartServer: Bool
     @Published var keepServerOnQuit: Bool
@@ -55,7 +56,6 @@ final class AppState: ObservableObject {
     private let defaults = UserDefaults.standard
 
     private init() {
-        port = defaults.object(forKey: "port") as? Int ?? 3080
         serverCommand = defaults.string(forKey: "serverCommand") ?? "dsh --profile web"
         autoStartServer = defaults.object(forKey: "autoStartServer") as? Bool ?? true
         keepServerOnQuit = defaults.object(forKey: "keepServerOnQuit") as? Bool ?? false
@@ -63,15 +63,10 @@ final class AppState: ObservableObject {
     }
 
     var url: URL {
-        // 设置里可能被填成 0 或越界值，clamp 到合法范围
-        let p = min(max(port, 1), 65535)
-        return URL(string: "http://127.0.0.1:\(p)")!
+        return URL(string: "http://127.0.0.1:\(Self.defaultPort)")!
     }
 
     func saveSettings() {
-        // 写回时同样 clamp，保证下次启动一致
-        port = min(max(port, 1), 65535)
-        defaults.set(port, forKey: "port")
         defaults.set(serverCommand, forKey: "serverCommand")
         defaults.set(autoStartServer, forKey: "autoStartServer")
         defaults.set(keepServerOnQuit, forKey: "keepServerOnQuit")

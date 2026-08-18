@@ -59,30 +59,38 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 # 菜单栏模板图标 + 官方 SVG（运行时可用）
 cp "$ROOT/.build/whale-icon.png" "$APP/Contents/Resources/whale-icon.png"
 cp "$ROOT/Resources/whale.svg" "$APP/Contents/Resources/whale.svg"
-# Appearance Overlay 资源（zh-simplified 等）
+# Overlay 资源（desktop-layout 等）
 mkdir -p "$APP/Contents/Resources/overlays"
 cp "$ROOT"/Resources/overlays/*.js "$APP/Contents/Resources/overlays/"
 
-echo "==> [4/5] build DSHLauncher (菜单栏常驻)"
+echo "==> [4/5] build DSHLauncher (菜单栏常驻；源码已剥离出仓库，仅本地构建)"
 LAUNCHER="$ROOT/build/DSH Launcher.app"
-rm -rf "$LAUNCHER"
-mkdir -p "$LAUNCHER/Contents/MacOS" "$LAUNCHER/Contents/Resources"
-swiftc -O \
-  -target arm64-apple-macosx13.0 \
-  -vfsoverlay "$FIX_DIR/overlay.yaml" \
-  "$ROOT/Sources/DSHLauncher/main.swift" \
-  -o "$LAUNCHER/Contents/MacOS/DSHLauncher"
-cp "$ROOT/Resources/Info-Launcher.plist" "$LAUNCHER/Contents/Info.plist"
-cp "$ROOT/.build/whale-icon.png" "$LAUNCHER/Contents/Resources/whale-icon.png"
-cp "$APP/Contents/Resources/AppIcon.icns" "$LAUNCHER/Contents/Resources/AppIcon.icns"
+if [ -f "$ROOT/Sources/DSHLauncher/main.swift" ] && [ -f "$ROOT/Resources/Info-Launcher.plist" ]; then
+  rm -rf "$LAUNCHER"
+  mkdir -p "$LAUNCHER/Contents/MacOS" "$LAUNCHER/Contents/Resources"
+  swiftc -O \
+    -target arm64-apple-macosx13.0 \
+    -vfsoverlay "$FIX_DIR/overlay.yaml" \
+    "$ROOT/Sources/DSHLauncher/main.swift" \
+    -o "$LAUNCHER/Contents/MacOS/DSHLauncher"
+  cp "$ROOT/Resources/Info-Launcher.plist" "$LAUNCHER/Contents/Info.plist"
+  cp "$ROOT/.build/whale-icon.png" "$LAUNCHER/Contents/Resources/whale-icon.png"
+  cp "$APP/Contents/Resources/AppIcon.icns" "$LAUNCHER/Contents/Resources/AppIcon.icns"
+else
+  echo "    跳过：DSH Launcher 源码不在本机（已从仓库剥离），仅构建主应用"
+  LAUNCHER=""
+fi
 
 echo "==> [5/5] codesign (ad-hoc)"
 codesign --force --deep -s - "$APP"
-codesign --force --deep -s - "$LAUNCHER"
+if [ -n "$LAUNCHER" ]; then
+  codesign --force --deep -s - "$LAUNCHER"
+fi
 
 echo ""
 echo "==> done:"
 echo "    $APP"
-echo "    $LAUNCHER"
-echo "    运行: open \"$LAUNCHER\""
-echo "    自测: \"$APP/Contents/MacOS/DSHDesktop\" --selftest"
+if [ -n "$LAUNCHER" ]; then
+  echo "    $LAUNCHER"
+  echo "    运行: open \"$LAUNCHER\""
+fi

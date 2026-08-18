@@ -35,14 +35,12 @@ final class ServerManager: ObservableObject {
         guard serverProcess == nil else { return }
         let url = appState.url
         if await isHealthy(url) {
-            Log.info("attach: 检测到运行中的 DSH 实例 at \(url.absoluteString)")
             startedByUs = false
             status = .running
             startPolling()
         } else if status != .starting {
             // 用户可能在 attach 完成前手动点了“启动”（status=.starting），
             // 此时不能把状态覆盖回 .stopped
-            Log.info("attach: 端口 \(appState.port) 无实例，状态=stopped")
             status = .stopped
         }
     }
@@ -61,16 +59,22 @@ final class ServerManager: ObservableObject {
         Task {
             do {
                 let resolved = try await Self.resolveCommand(command)
-                Log.info("start: resolved command = \(resolved), port = \(port)")
                 // 解析期间用户可能又点了启动/停止，防止重复 spawn
                 guard self.serverProcess == nil else {
-                    Log.info("start: 解析完成时已有进程在运行，放弃本次启动")
+                    return
+                }
+                // 后端唯一性：spawn 前确认端口上没有已健康的 DSH 实例
+                //（外部终端启动的、或上一轮未收尾的）。已有实例则转为
+                // attach，绝不重复拉起第二个后端。
+                if await self.isHealthy(self.appState.url) {
+                    self.startedByUs = false
+                    self.status = .running
+                    self.startPolling()
                     return
                 }
                 try spawn(resolved: resolved, port: port)
                 startPolling()
             } catch {
-                Log.info("start: 失败 \(error.localizedDescription)")
                 status = .error("无法启动服务器：\(error.localizedDescription)")
             }
         }
@@ -78,6 +82,8 @@ final class ServerManager: ObservableObject {
 
     func stop() {
         guard let process = serverProcess else { return }
+        pollTask?.cancel()
+        pollTask = nil
         stopping = true
         status = .stopped
         process.terminate()
@@ -93,6 +99,8 @@ final class ServerManager: ObservableObject {
     /// 同步停止并等待退出（用于应用退出 / 自测）
     func stopAndWait() {
         guard let process = serverProcess, process.isRunning else { return }
+        pollTask?.cancel()
+        pollTask = nil
         stopping = true
         process.terminate()
         let deadline = Date().addingTimeInterval(4)
@@ -162,7 +170,6 @@ final class ServerManager: ObservableObject {
         try process.run()
         serverProcess = process
         startedByUs = true
-        Log.info("spawn: pid=\(process.processIdentifier)")
     }
 
     /// 把用户命令解析为一条**不依赖 PATH** 的绝对命令。
@@ -254,7 +261,6 @@ final class ServerManager: ObservableObject {
 
     private static func cacheResolved(_ command: String) {
         UserDefaults.standard.set(command, forKey: "resolvedServerCommand")
-        Log.info("resolve: 已缓存启动命令 -> \(command)")
     }
 
     private static func shellResolve(_ name: String) async -> String? {
@@ -291,15 +297,15 @@ final class ServerManager: ObservableObject {
             guard let self else { return }
             var consecutiveFailures = 0
             while !Task.isCancelled {
+                // 服务器已停止（手动 stop / 进程退出）：结束轮询，避免空转
+                if self.status == .stopped { break }
                 let ok = await self.isHealthy(url)
                 if ok {
                     consecutiveFailures = 0
                     if self.status != .running {
                         let ready = Date()
                         if let spawnAt = self.spawnAt {
-                            Log.info("poll: 服务器就绪 → running（spawn 后 \(String(format: "%.2f", ready.timeIntervalSince(spawnAt)))s）")
                         } else {
-                            Log.info("poll: 服务器就绪 → running")
                         }
                         self.status = .running
                     }
@@ -307,11 +313,11 @@ final class ServerManager: ObservableObject {
                 } else {
                     consecutiveFailures += 1
                     if self.status == .running && consecutiveFailures >= 2 {
-                        Log.info("poll: 连续失败 \(consecutiveFailures) 次 → 连接中断")
                         self.status = .error("与服务器的连接中断")
                     }
-                    // 启动阶段加密轮询（0.5s），尽快发现服务器就绪
-                    try? await Task.sleep(for: .milliseconds(500))
+                    // 启动阶段（starting）0.5s 加密轮询尽快发现就绪；
+                    // 其余状态 5s 慢轮询，避免空闲高频空转
+                    try? await Task.sleep(for: self.status == .starting ? .milliseconds(500) : .seconds(5))
                 }
             }
         }

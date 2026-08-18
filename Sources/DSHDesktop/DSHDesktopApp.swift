@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import WebKit
+import UserNotifications
 
 @main
 struct DSHDesktopApp: App {
@@ -60,19 +61,10 @@ struct DSHDesktopApp: App {
 
                 Divider()
 
-                if appState.bridgeConnected {
-                    Button("发送测试通知（桥接插件）") {
-                        Task { @MainActor in
-                            let ok = await BridgeClient.shared.notify(
-                                title: "DSH Desktop",
-                                message: "来自 dsh-desktop-bridge 插件的原生通知 ✅",
-                                appState: appState
-                            )
-                            notifyResult(ok)
-                        }
+                Button("发送测试通知") {
+                    Task { @MainActor in
+                        await sendTestNotification()
                     }
-                } else {
-                    Text("桥接插件未激活（重启 DSH 后可用）")
                 }
             }
         }
@@ -82,15 +74,18 @@ struct DSHDesktopApp: App {
         }
     }
 
-    /// 菜单里无法就地反馈，用系统通知展示结果
-    private func notifyResult(_ ok: Bool) {
-        let script = ok
-            ? "display notification \"已触发原生通知\" with title \"DSH Desktop\""
-            : "display notification \"桥接插件未激活，请重启 DSH 服务器\" with title \"DSH Desktop\""
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        try? process.run()
+    /// 原生通知（UserNotifications）：归属 DSH Desktop，
+    /// 系统设置 → 通知 里可见可管；首次发送时请求授权
+    private func sendTestNotification() async {
+        let center = UNUserNotificationCenter.current()
+        let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        guard granted else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "DSH Desktop"
+        content.body = "原生通知通道正常 ✅"
+        try? await center.add(UNNotificationRequest(
+            identifier: UUID().uuidString, content: content, trigger: nil
+        ))
     }
 }
 
@@ -100,10 +95,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dragStrip: DragStripView?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.info("applicationDidFinishLaunching")
         // 从终端直接运行二进制时也需要常规 Dock 应用行为
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // 原生通知：应用在前台时也显示横幅
+        UNUserNotificationCenter.current().delegate = self
 
         // 沉浸式窗口：等主窗口出现后设置透明标题栏 + 内容延伸（红绿灯悬浮、内容顶到顶）。
         // 受「沉浸式标题栏」开关控制（默认开，关闭后回到系统标准标题栏）。
@@ -116,33 +112,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.applyWindowEnhancements()
+            Task { @MainActor [weak self] in
+                self?.applyWindowEnhancements()
+            }
         }
         // 窗口尺寸变化时跟随拖拽带（Low Memory：事件驱动，无轮询）
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: nil, queue: .main
         ) { [weak self] notification in
-            guard let window = notification.object as? NSWindow,
-                  window.title.hasPrefix("DSH Desktop") else { return }
-            self?.layoutDragStrip(window)
+            guard let window = notification.object as? NSWindow else { return }
+            let windowNumber = window.windowNumber
+            Task { @MainActor [weak self] in
+                guard let window = NSApp.window(withWindowNumber: windowNumber),
+                      window.title.hasPrefix("DSH Desktop"),
+                      AppState.shared.immersiveTitlebar else { return }
+                self?.layoutDragStrip(window)
+            }
         }
         // 网页加载完成后把拖拽带重新置顶（SwiftUI 晚插入的 WKWebView 会盖住先加入的拖拽带）
         NotificationCenter.default.addObserver(
             forName: .dshWebViewLoaded, object: nil, queue: .main
         ) { [weak self] notification in
             guard let webView = notification.object as? WKWebView,
-                  let window = webView.window else { return }
-            self?.installDragStrip(in: window)
+                  let windowNumber = webView.window?.windowNumber else { return }
+            Task { @MainActor [weak self] in
+                guard let window = NSApp.window(withWindowNumber: windowNumber),
+                      AppState.shared.immersiveTitlebar else { return }
+                self?.installDragStrip(in: window)
+            }
         }
 
         // 窗口菜单补充：每次打开前确保系统级控制项在位
         ensureWindowMenu()
-
-        if CommandLine.arguments.contains("--selftest") {
-            Task { @MainActor in
-                await SelfTest.run(appState: AppState.shared, server: ServerManager.shared)
-            }
-        }
     }
 
     // MARK: - 沉浸式窗口（顶到顶）
@@ -161,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 window.titleVisibility = .hidden
                 window.styleMask.insert(.fullSizeContentView)
                 window.titlebarSeparatorStyle = .none
+                alignTrafficLights(in: window)
             } else {
                 window.titlebarAppearsTransparent = false
                 window.titleVisibility = .visible
@@ -168,18 +170,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 window.titlebarSeparatorStyle = .automatic
             }
             fullSizeApplied = true
-            // 拖拽带：红绿灯水平行整行可拖（原生 performDrag）
-            installDragStrip(in: window)
-            // 红绿灯保持系统默认绝对位置（折叠侧栏宽度按此锚点适配居中）
+            // 拖拽带只属于沉浸式标题栏；关闭沉浸式时恢复原生标题栏的点击区域。
+            if immersive {
+                installDragStrip(in: window)
+            } else {
+                removeDragStrip(from: window)
+            }
+            // 红绿灯使用 Codex/参考外壳中心锚点；折叠侧栏是独立的 Web 外壳规则。
         }
         if fullSizeApplied {
-            Log.info("window: 沉浸式标题栏 = \(immersive ? "开（顶到顶）" : "关（标准标题栏）")")
         }
         // 运行时几何断言：contentView 是否覆盖到窗口顶部（用于自动验证）
         if let window = NSApp.windows.first(where: { $0.title.hasPrefix("DSH Desktop") }) {
             let wf = window.frame
             let cf = window.contentView?.frame ?? .zero
-            Log.info("window: frame=\(Int(wf.height)) contentView=\(Int(cf.height)) edgeToEdge=\(Int(cf.height) >= Int(wf.height) - 1)")
         }
     }
 
@@ -196,7 +200,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let full = NSMenuItem(title: "切换全屏", action: #selector(toggleFullScreen(_:)), keyEquivalent: "f")
         for item in [center, left, right, full] { item.tag = 9001 }
         [center, left, right, full].forEach { menu.addItem($0) }
-        Log.info("window menu: 已补充窗口管理项")
     }
 
     /// NSMenuDelegate：窗口菜单每次打开前确保补充项在位
@@ -205,6 +208,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - 拖拽带（方案1：红绿灯右侧约 32 CSS px 透明拖拽）
+
+    /// 将系统按钮组整体平移到用户约定的中心锚点 (23, 23)，不改按钮相对位置。
+    ///
+    /// 红灯左上角距离窗口左/上边缘等量；按钮组整体平移，保留 AppKit
+    /// 自己决定的按钮尺寸与间距。
+    private func alignTrafficLights(in window: NSWindow) {
+        guard let close = window.standardWindowButton(.closeButton),
+              let mini = window.standardWindowButton(.miniaturizeButton),
+              let zoom = window.standardWindowButton(.zoomButton),
+              let host = close.superview else { return }
+
+        let buttons = [close, mini, zoom]
+        let closeFrame = close.frame
+        let horizontalOffsets = buttons.map { $0.frame.minX - closeFrame.minX }
+        let targetMidY = host.isFlipped
+            ? DesktopLayout.trafficLightCenterY
+            : host.bounds.height - DesktopLayout.trafficLightCenterY
+        let targetCloseMinX = DesktopLayout.trafficLightCenterX - closeFrame.width / 2
+
+        for (button, offset) in zip(buttons, horizontalOffsets) {
+            var frame = button.frame
+            frame.origin.x = targetCloseMinX + offset
+            frame.origin.y = targetMidY - frame.height / 2
+            button.frame = frame
+        }
+
+    }
 
     private func installDragStrip(in window: NSWindow) {
         guard let contentView = window.contentView else { return }
@@ -215,7 +245,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if contentView.subviews.last !== strip {
                 strip.removeFromSuperview()
                 contentView.addSubview(strip)
-                Log.info("drag strip: 重新置顶（WKWebView 曾盖住拖拽带）")
             }
             layoutDragStrip(window)
             return
@@ -226,32 +255,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         layoutDragStrip(window)
     }
 
-    /// 拖拽带：红绿灯水平行整行（全宽），行高由红绿灯组件位置反推——
-    /// 行高 = 按钮上边距 × 2 + 按钮高（按钮在行内垂直居中，轴线与行中心重合）。
-    /// 行高单一来源 = contentLayoutRect 差值（与注入的 --dsh-traffic-inset 一致）。
+    private func removeDragStrip(from window: NSWindow) {
+        guard let strip = dragStrip, strip.window === window else { return }
+        strip.removeFromSuperview()
+        dragStrip = nil
+    }
+
+    /// 拖拽带：覆盖顶部透明行，行高 = 红绿灯水平中心线 × 2 = 46。
+    /// 红绿灯在该行内垂直居中（中心 y=23），左右留出系统按钮/右侧控件安全区。
     private func layoutDragStrip(_ window: NSWindow) {
         guard let strip = dragStrip, let contentView = window.contentView else { return }
-        guard let close = window.standardWindowButton(.closeButton) else { return }
-        // 红绿灯组件垂直范围（flipped 坐标：minY 即距顶）
-        let rowHeight = max(DesktopLayout.trafficLightRowHeight,
-                            window.frame.height - window.contentLayoutRect.height)
-        let axisFromTop = close.frame.midY
-        // 轴线在行内垂直居中；行夹取在窗口可视范围内
-        let stripTopFromTop = max(0, axisFromTop - rowHeight / 2)
-        // 坐标系：NSHostingView 是 flipped（原点左上），拖拽带 frame.y 直接取
-        // 「距顶」；非 flipped 视图才用窗口高换算。此前按非 flipped 计算，
-        // 拖拽带被放到了窗口底部（实测 cv.isFlipped=true，y=847 = 底部）——
-        // 这是顶部不可拖拽的根因。
+        alignTrafficLights(in: window)
+        let rowHeight = DesktopLayout.dragStripHeight
         let y = contentView.isFlipped
-            ? stripTopFromTop
-            : window.frame.height - stripTopFromTop - rowHeight
+            ? 0
+            : contentView.bounds.height - rowHeight
+        let safeWidth = DesktopLayout.trafficLightSafeWidth
+        let rightSafeWidth = min(
+            DesktopLayout.topControlsSafeWidth,
+            max(0, contentView.bounds.width - safeWidth)
+        )
         strip.frame = NSRect(
-            x: 0,
+            x: safeWidth,
             y: y,
-            width: contentView.bounds.width,
+            width: max(0, contentView.bounds.width - safeWidth - rightSafeWidth),
             height: rowHeight
         )
-        Log.info("drag strip: x=\(Int(strip.frame.minX)) w=\(Int(strip.frame.width)) h=\(Int(strip.frame.height)) axisFromTop=\(Int(axisFromTop)) rowHeight=\(Int(rowHeight))")
     }
 
     private func mainWindow() -> NSWindow? {
@@ -302,4 +331,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 extension Notification.Name {
     static let dshReloadRequested = Notification.Name("dshReloadRequested")
     static let dshWebViewLoaded = Notification.Name("dshWebViewLoaded")
+}
+
+
+// 原生通知：应用在前台时也显示横幅（默认前台不弹）
+extension AppDelegate: @preconcurrency UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
 }

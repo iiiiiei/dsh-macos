@@ -10,6 +10,18 @@ let svgPath = CommandLine.arguments[1]
 let outputDir = CommandLine.arguments[2]
 let menubarPng = CommandLine.arguments[3]
 
+guard let svgData = try? Data(contentsOf: URL(fileURLWithPath: svgPath)),
+      var svgString = String(data: svgData, encoding: .utf8) else {
+    FileHandle.standardError.write("cannot load \(svgPath)\n".data(using: .utf8)!)
+    exit(1)
+}
+// 应用图标使用白色鲸鱼；菜单栏模板仍用原始黑色。
+svgString = svgString.replacingOccurrences(of: "fill=\"#000\"", with: "fill=\"#FFFFFF\"")
+guard let whiteSvgData = svgString.data(using: .utf8),
+      let whiteSvg = NSImage(data: whiteSvgData) else {
+    FileHandle.standardError.write("cannot create white whale image\n".data(using: .utf8)!)
+    exit(1)
+}
 guard let svg = NSImage(contentsOfFile: svgPath) else {
     FileHandle.standardError.write("cannot load \(svgPath)\n".data(using: .utf8)!)
     exit(1)
@@ -47,29 +59,53 @@ func renderPixels(size: Int, draw: (CGContext, CGFloat) -> Void) -> NSBitmapImag
     return rep
 }
 
-/// 应用图标：方图画布 + 圆角白底 + 黑色鲸鱼（内容居中留白，圆角可见）
+/// 应用图标：macOS Big Sur 风格圆角 + 深色渐变背景 + 白色鲸鱼。
+/// 保留鲸鱼图案内容，仅改变背景呈现方式以融入 macOS Dock。
 func renderAppIcon(size: Int) -> NSImage {
     let rep = renderPixels(size: size) { ctx, s in
-        // 圆角白底：加大边距（inset 8%）避免白底顶格显得比相邻 App 大；
-        // 圆角 22%（对齐方案1 观感：主体占比缩小、留白均衡）
+        let corner = s * 0.224 // Big Sur 圆角
+        // macOS 图标规范：内容不要顶格，留出约 8% 边距，
+        // 这样 Dock 中行高/列宽才和其他原生 App 一致。
         let inset = s * 0.08
         let bgRect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-        let corner = s * 0.22
-        ctx.addPath(CGPath(roundedRect: bgRect, cornerWidth: corner, cornerHeight: corner, transform: nil))
-        ctx.clip()
-        NSColor.white.setFill()
-        bgRect.fill()
-        ctx.resetClip()
+        let shape = CGPath(roundedRect: bgRect, cornerWidth: corner, cornerHeight: corner, transform: nil)
 
-        // 黑色鲸鱼：居中，高度约占 60%
-        let whaleSize = s * 0.60
+        // 1. 投影：让图标在 Dock/桌面有层次感
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.02),
+                      blur: s * 0.05,
+                      color: NSColor.black.withAlphaComponent(0.35).cgColor)
+        ctx.addPath(shape)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 2. 渐变背景（深灰到稍浅的深灰，类似系统 App 图标）
+        ctx.saveGState()
+        ctx.addPath(shape)
+        ctx.clip()
+        let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor(calibratedRed: 0.20, green: 0.20, blue: 0.22, alpha: 1.0).cgColor,
+                NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0).cgColor
+            ] as CFArray,
+            locations: [0.0, 1.0]
+        )!
+        ctx.drawLinearGradient(gradient,
+                               start: CGPoint(x: 0, y: s),
+                               end: CGPoint(x: 0, y: 0),
+                               options: [])
+        ctx.restoreGState()
+
+        // 3. 白色鲸鱼：居中，高度约占 55%
+        let whaleSize = s * 0.55
         let whaleRect = NSRect(
             x: (s - whaleSize) / 2,
             y: (s - whaleSize) / 2,
             width: whaleSize,
             height: whaleSize
         )
-        svg.draw(in: whaleRect)
+        whiteSvg.draw(in: whaleRect)
     }
     let image = NSImage(size: rep.size)
     image.addRepresentation(rep)

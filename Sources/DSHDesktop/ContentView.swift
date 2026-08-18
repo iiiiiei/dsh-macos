@@ -9,11 +9,7 @@ struct ContentView: View {
         Group {
             switch server.status {
             case .running:
-                HarnessWebView(url: appState.url, onSessionViewed: { sessionId in
-                    if appState.currentSessionId != sessionId {
-                        appState.currentSessionId = sessionId
-                    }
-                }) { state in
+                HarnessWebView(url: appState.url) { state in
                     switch state {
                     case .loaded(let title):
                         appState.pageTitle = title
@@ -31,20 +27,14 @@ struct ContentView: View {
                 StatusPanel(status: server.status, onStart: { server.start() }, spinner: false)
             }
         }
-        .frame(minWidth: 960, minHeight: 640)
+        .frame(minWidth: 600, minHeight: 360)
+        // 顶到顶：会话顶部栏需要覆盖透明拖拽行；侧栏单独由 desktop-layout.js
+        // 预留标题行，不把整个会话区整体下推。
+        .ignoresSafeArea()
         // 顶到顶：内容忽略 safe area（否则 SwiftUI 会把 WebView 从标题栏下方排布，
         // 顶部露出窗口背景色横条）
-        .ignoresSafeArea()
         .onAppear {
             bootstrap()
-            // 沉浸式：内容延伸到标题栏区域（配合 hiddenTitleBar 真正顶到顶）
-            DispatchQueue.main.async {
-                if let window = NSApp.windows.first(where: { $0.title.hasPrefix("DSH Desktop") }) {
-                    window.titlebarAppearsTransparent = true
-                    window.titleVisibility = .hidden
-                    window.styleMask.insert(.fullSizeContentView)
-                }
-            }
         }
         .onChange(of: appState.pageTitle) { newTitle in
             updateWindowTitle(newTitle)
@@ -53,7 +43,6 @@ struct ContentView: View {
 
     /// 启动时：attach 已有实例 → 按设置自动启动 → 启动桥接轮询
     private func bootstrap() {
-        Log.info("bootstrap: 开始（port=\(appState.port), autoStart=\(appState.autoStartServer)）")
         Task {
             await server.attach()
             if appState.autoStartServer && !server.status.isActive {

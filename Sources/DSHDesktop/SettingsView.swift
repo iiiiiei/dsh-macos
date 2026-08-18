@@ -22,22 +22,6 @@ struct SettingsView: View {
                 Toggle("退出应用时保持服务器运行", isOn: $appState.keepServerOnQuit)
             }
 
-            Section("外观（Appearance）") {
-                Picker("皮肤", selection: $appState.appearanceId) {
-                    ForEach(AppearanceCatalog.available, id: \.id) { m in
-                        Text(m.name).tag(m.id)
-                    }
-                    // 预留扩展点（本任务不实现皮肤，仅展示规划）
-                    Text("Glass（规划中）").tag("glass")
-                    Text("Compact（规划中）").tag("compact")
-                }
-                .pickerStyle(.menu)
-                Text("Official 为默认外观（零覆盖）；皮肤类外观基于 Official 叠加 Overlay。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("中文通俗说明（翻译固定 UI，聊天内容不受影响）", isOn: $appState.zhOverlay)
-            }
-
             Section("桌面集成") {
                 Toggle("开机自动启动 DSH Desktop", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { value in

@@ -4,7 +4,6 @@ import WebKit
 /// 内嵌 DSH Web GUI 的 WKWebView 封装
 struct HarnessWebView: NSViewRepresentable {
     let url: URL
-    var onSessionViewed: ((String) -> Void)?
     var onLoadState: (LoadState) -> Void = { _ in }
 
     enum LoadState {
@@ -21,49 +20,6 @@ struct HarnessWebView: NSViewRepresentable {
         config.preferences.isElementFullscreenEnabled = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
-        // 注入 fetch 钩子：GUI 每次打开/切换会话都会调用 session.history（或发送
-        // session.prompt），拦截后把 sessionId 上报给应用，使 token 统计跟随
-        // 用户当前打开的对话窗口。
-        let hook = """
-        (function () {
-          if (window.__dshSessionHook) return;
-          window.__dshSessionHook = true;
-          const orig = window.fetch;
-          window.fetch = function () {
-            try {
-              // DSH 浏览器客户端 doFetch 传入的是 URL 对象（new URL(path, base)），
-              // 取 href 而不是 .url
-              const req = arguments[0];
-              let url = '';
-              if (typeof req === 'string') url = req;
-              else if (req && typeof req.href === 'string') url = req.href;
-              else if (req && typeof req.url === 'string') url = req.url;
-              // 任何带 sessionId 的会话方法都可能暴露“当前打开的会话”
-              if (url.indexOf('/api/session.') !== -1) {
-                const body = arguments[1] && typeof arguments[1].body === 'string' ? JSON.parse(arguments[1].body) : null;
-                if (body && body.payload && body.payload.sessionId) {
-                  window.webkit.messageHandlers.dshSession.postMessage({
-                    method: body.method,
-                    sessionId: body.payload.sessionId
-                  });
-                }
-              }
-            } catch (e) {}
-            return orig.apply(this, arguments);
-          };
-        })();
-        """
-        let userScript = WKUserScript(source: hook, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        config.userContentController.addUserScript(userScript)
-        config.userContentController.add(context.coordinator, name: "dshSession")
-
-        // 中文通俗说明 Overlay（Appearance 增强，Official 默认零覆盖；
-        // 开关关闭时 setEnabled(false) 还原官方原文，不残留）
-        if let overlayPath = Bundle.main.path(forResource: "zh-simplified", ofType: "js", inDirectory: "overlays"),
-           let overlay = try? String(contentsOfFile: overlayPath, encoding: .utf8) {
-            let zhScript = WKUserScript(source: overlay, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-            config.userContentController.addUserScript(zhScript)
-        }
 
         let webView = WKWebView(frame: .zero, configuration: config)
         // 沉浸式：页面背景透明（配合 fullSizeContentView 顶到顶；WKWebView 的
@@ -73,7 +29,6 @@ struct HarnessWebView: NSViewRepresentable {
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         context.coordinator.webView = webView
-        context.coordinator.onSessionViewed = onSessionViewed
         context.coordinator.observeReload()
         context.coordinator.observeEnhancements()
         return webView
@@ -89,32 +44,22 @@ struct HarnessWebView: NSViewRepresentable {
             // 同步置位 isLoading，避免 didStartProvisional 异步到达前
             // 被另一次 updateNSView 重复发起加载
             context.coordinator.isLoading = true
-            Log.info("webview: load \(url.absoluteString)")
             webView.load(URLRequest(url: url))
         }
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var parent: HarnessWebView
         weak var webView: WKWebView?
         private var reloadObserver: NSObjectProtocol?
         var isLoading = false
         private(set) var hasLoadedOnce = false
 
-        /// 上报 GUI 当前打开的会话（来自 fetch 钩子）
-        var onSessionViewed: ((String) -> Void)?
 
         init(_ parent: HarnessWebView) {
             self.parent = parent
         }
 
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "dshSession",
-                  let body = message.body as? [String: Any],
-                  let sessionId = body["sessionId"] as? String else { return }
-            Log.info("webview: GUI 打开会话 \(sessionId)")
-            onSessionViewed?(sessionId)
-        }
 
         deinit {
             if let reloadObserver {
@@ -132,10 +77,8 @@ struct HarnessWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            Log.info("webview: didFinish title=\(webView.title ?? "-")")
-            // 运行时断言：WebView 是否覆盖到窗口顶边（顶到顶的最终判定）
+            // 会话顶部栏保持从窗口顶部开始；透明拖拽行覆盖在其上方。
             DispatchQueue.main.async {
-                Log.info("webview: frame=\(Int(webView.frame.minY)),\(Int(webView.frame.height)) edgeTop=\(webView.frame.minY <= 1)")
             }
             syncEnhancements(webView)
             // 通知宿主：网页已加载（AppDelegate 借此把拖拽带重新置顶——
@@ -158,52 +101,16 @@ struct HarnessWebView: NSViewRepresentable {
             parent.onLoadState(.loaded(title: webView.title ?? "DeepSeek Harness"))
         }
 
-        // MARK: - Appearance 增强同步（zh Overlay 开关 + 安全区变量）
+        // MARK: - 增强 Overlay 同步（桌面外壳布局）
 
         private func syncEnhancements(_ webView: WKWebView) {
-            // zh Overlay 开关（关 = 还原官方原文）
-            let zh = UserDefaults.standard.object(forKey: "zhOverlay") as? Bool ?? true
-            webView.evaluateJavaScript("window.__dshZhOverlay && window.__dshZhOverlay.setEnabled(\(zh))") { _, error in
-                if let error { Log.info("webview: zh overlay 开关同步失败 \(error.localizedDescription)") }
-            }
-            // 安全区：用 standardWindowButton 读取 traffic light 实际 frame，动态注入 CSS 变量
-            // （禁止散落硬编码魔法数；Official 外观不消费该变量，仅供未来皮肤 Overlay 使用）
-            if let metrics = trafficLightMetrics(for: webView) {
-                let script = """
-                document.documentElement.style.setProperty('--dsh-traffic-left', '\(metrics.left)px');
-                document.documentElement.style.setProperty('--dsh-traffic-width', '\(metrics.width)px');
-                document.documentElement.style.setProperty('--dsh-traffic-inset', '\(metrics.rowHeight)px');
-                """
-                webView.evaluateJavaScript(script) { _, _ in }
-            }
-            // 方案1 布局 Overlay（幂等注入：固定 style id）
+            // 本地桌面外壳 Overlay（幂等注入：固定 style id）。
+            // 它只约束根 Frame 的外层列/行，不测量或改写官方功能组件。
             if let layoutPath = Bundle.main.path(forResource: "desktop-layout", ofType: "js", inDirectory: "overlays"),
                let layout = try? String(contentsOfFile: layoutPath, encoding: .utf8) {
                 webView.evaluateJavaScript(layout) { _, error in
-                    if let error { Log.info("webview: desktop-layout 注入失败 \(error.localizedDescription)") }
                 }
             }
-        }
-
-        /// 读取红绿灯实际 frame（内容坐标），动态计算左缘、占用宽度与行高
-        private func trafficLightMetrics(for webView: WKWebView) -> (left: CGFloat, width: CGFloat, rowHeight: CGFloat)? {
-            guard let window = webView.window,
-                  let contentView = window.contentView,
-                  let close = window.standardWindowButton(.closeButton),
-                  let zoom = window.standardWindowButton(.zoomButton) else { return nil }
-            // 原始坐标自查：按钮 frame（相对 superview）与 superview frame、contentView bounds
-            if let sv = close.superview {
-                Log.info("traffic raw: close=\(close.frame) sv=\(sv.frame) svClass=\(type(of: sv)) contentBounds=\(contentView.bounds)")
-            }
-            let cf = close.convert(close.bounds, to: contentView)
-            let zf = zoom.convert(zoom.bounds, to: contentView)
-            let left = cf.minX   // x 坐标不受 flipped 影响
-            let width = max(zf.maxX, cf.maxX) - left + 8
-            // 行高：window 高度与内容布局区（contentLayoutRect，10.10+）的差值，
-            // fullSize 下即红绿灯悬浮行高度（系统 API 动态计算，不依赖坐标系换算）
-            let rowHeight = max(DesktopLayout.trafficLightRowHeight,
-                                window.frame.height - window.contentLayoutRect.height)
-            return (left, width, rowHeight)
         }
 
         /// 设置变化时联动（UserDefaults 通知）
@@ -229,17 +136,14 @@ struct HarnessWebView: NSViewRepresentable {
                     tree += " \(i)=\(type(of: sv)){\(Int(sv.frame.minX)),\(Int(sv.frame.minY)),\(Int(sv.frame.width)),\(Int(sv.frame.height))}"
                 }
                 tree += " ]"
-                Log.info("viewtree: \(tree)")
                 if let theme = cv.superview {
                     var t = "themeframe=\(type(of: theme)) subviews:["
                     for (i, sv) in theme.subviews.enumerated() {
                         t += " \(i)=\(type(of: sv)){\(Int(sv.frame.minX)),\(Int(sv.frame.minY)),\(Int(sv.frame.width)),\(Int(sv.frame.height))}"
                     }
                     t += " ]"
-                    Log.info("themeframe: \(t)")
                 }
                 func hit(_ name: String, _ p: NSPoint) {
-                    Log.info("hittest \(name)(\(Int(p.x)),\(Int(p.y)))=\(cv.hitTest(p).map { String(describing: type(of: $0)) } ?? "nil")")
                 }
                 hit("top14", NSPoint(x: 400, y: 14))
                 hit("top14unflipped", NSPoint(x: 400, y: cv.bounds.height - 14))
@@ -331,11 +235,9 @@ struct HarnessWebView: NSViewRepresentable {
             })();
             """
             webView.evaluateJavaScript(js) { result, _ in
-                Log.info("sidebar probe: \(result ?? "?")")
             }
             // 黄灯（miniaturize）按钮 frame（图标对齐锚点）
             if let window = webView.window, let mini = window.standardWindowButton(.miniaturizeButton) {
-                Log.info("traffic mini: frame=\(mini.frame)")
             }
             // 展开态：主内容容器 + 会话选中项（aria-selected / active / selected）
             let expanded = """
@@ -372,7 +274,8 @@ struct HarnessWebView: NSViewRepresentable {
               }
               if (tops.length) out.topButtons = tops.slice(0, 6);
               // 选中框/悬停框 computedStyle（宽度机制）
-              var rows = document.querySelectorAll('.YDXeBa_sessionRow');
+              var sidebar = document.querySelector('.pI_x6G_sidebarCol');
+              var rows = sidebar ? sidebar.querySelectorAll('.YDXeBa_projectRow, .YDXeBa_sessionRow') : [];
               var rowInfo = [];
               for (var r2 = 0; r2 < Math.min(rows.length, 3); r2++) {
                 var cs2 = getComputedStyle(rows[r2]);
@@ -380,6 +283,27 @@ struct HarnessWebView: NSViewRepresentable {
                 rowInfo.push({ cls: String(rows[r2].className).slice(0, 80), w: Math.round(rr2.width), l: Math.round(rr2.left), r: Math.round(rr2.right), ml: cs2.marginLeft, mr: cs2.marginRight, pl: cs2.paddingLeft, pr: cs2.paddingRight, box: cs2.boxSizing });
               }
               if (rowInfo.length) out.rows = rowInfo;
+              var anchor = null;
+              if (sidebar) {
+                var anchors = sidebar.querySelectorAll('.hHd-Xa_newSession');
+                for (var a2 = 0; a2 < anchors.length; a2++) {
+                  var candidate = anchors[a2].getBoundingClientRect();
+                  var anchorStyle = getComputedStyle(anchors[a2]);
+                  if (candidate.width && candidate.height && anchorStyle.display !== 'none' && anchorStyle.visibility !== 'hidden' && parseFloat(anchorStyle.opacity || '1') > 0.01) { anchor = anchors[a2]; break; }
+                }
+              }
+              if (anchor && rows.length) {
+                var ar = anchor.getBoundingClientRect();
+                out.newSession = { w: Math.round(ar.width), l: Math.round(ar.left), r: Math.round(ar.right) };
+                out.rowAligned = true;
+                for (var r3 = 0; r3 < rows.length; r3++) {
+                  var rowRect = rows[r3].getBoundingClientRect();
+                  if (Math.abs(rowRect.left - ar.left) > 1 || Math.abs(rowRect.right - ar.right) > 1) {
+                    out.rowAligned = false;
+                    break;
+                  }
+                }
+              }
               // 选中框父级与 logoRow 几何（宽度差异根因）
               var row0 = rows[0];
               if (row0 && row0.parentElement) {
@@ -395,16 +319,12 @@ struct HarnessWebView: NSViewRepresentable {
             })();
             """
             webView.evaluateJavaScript(expanded) { result, _ in
-                Log.info("layout probe: \(result ?? "?")")
                 // 展开态附加几何（含 overlay）
                 webView.evaluateJavaScript(expandedExtra) { r2, _ in
-                    Log.info("expanded extra: \(r2 ?? "?")")
                     // 原生对照：临时移除 overlay 后重测（完成即恢复）
                     webView.evaluateJavaScript(removeOverlayJS) { _, _ in
                         webView.evaluateJavaScript(expandedExtra) { r3, _ in
-                            Log.info("expanded native: \(r3 ?? "?")")
                             webView.evaluateJavaScript(restoreOverlayJS) { _, _ in
-                                Log.info("overlay restored (expanded)")
                             }
                         }
                     }
@@ -426,7 +346,6 @@ struct HarnessWebView: NSViewRepresentable {
             })();
             """
             webView.evaluateJavaScript(collapse) { result, _ in
-                Log.info("collapse probe: \(result ?? "?")")
             }
             // 展开态 logo 行避让实测
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
@@ -440,7 +359,6 @@ struct HarnessWebView: NSViewRepresentable {
                 })();
                 """
                 webView.evaluateJavaScript(logo) { result, _ in
-                    Log.info("logo probe: \(result ?? "?")")
                 }
             }
             // 折叠态：侧栏宽度 + 底部图标几何
@@ -494,16 +412,12 @@ struct HarnessWebView: NSViewRepresentable {
                 })();
                 """
                 webView.evaluateJavaScript(measure) { result, _ in
-                    Log.info("collapsed probe: \(result ?? "?")")
                     // 折叠态附加几何（含 overlay）
                     webView.evaluateJavaScript(collapsedExtra) { r2, _ in
-                        Log.info("collapsed extra: \(r2 ?? "?")")
                         // 原生对照：临时移除 overlay 后重测（完成即恢复）
                         webView.evaluateJavaScript(removeOverlayJS) { _, _ in
                             webView.evaluateJavaScript(collapsedExtra) { r3, _ in
-                                Log.info("collapsed native: \(r3 ?? "?")")
                                 webView.evaluateJavaScript(restoreOverlayJS) { _, _ in
-                                    Log.info("overlay restored (collapsed)")
                                 }
                             }
                         }
@@ -520,23 +434,18 @@ struct HarnessWebView: NSViewRepresentable {
             guard let window = webView.window else { return }
             let origin0 = window.frame.origin
             let h = window.frame.height
-            Log.info("dragtest: before=\(origin0) h=\(Int(h))")
             // 窗口级 hitTest 审计：事件链路上谁在最上层
             if let cv = window.contentView {
-                Log.info("dragtest: cv.isFlipped=\(cv.isFlipped) hit(400,14)=\(cv.hitTest(NSPoint(x: 400, y: 14)).map { String(describing: type(of: $0)) } ?? "nil") hit(400,\(Int(h) - 14))=\(cv.hitTest(NSPoint(x: 400, y: h - 14)).map { String(describing: type(of: $0)) } ?? "nil")")
             }
             if let theme = window.contentView?.superview {
-                Log.info("dragtest hittest theme(400,\(Int(h) - 14))=\(theme.hitTest(NSPoint(x: 400, y: h - 14)).map { String(describing: type(of: $0)) } ?? "nil")")
             }
             if let tb = window.standardWindowButton(.closeButton)?.superview {
-                Log.info("dragtest hittest titlebar(400,14)=\(tb.hitTest(NSPoint(x: 400, y: 14)).map { String(describing: type(of: $0)) } ?? "nil")")
             }
             func post(_ type: NSEvent.EventType, at p: NSPoint) {
                 guard let ev = NSEvent.mouseEvent(with: type, location: p, modifierFlags: [],
                                                    timestamp: ProcessInfo.processInfo.systemUptime,
                                                    windowNumber: window.windowNumber, context: nil,
                                                    eventNumber: 0, clickCount: 1, pressure: 1) else {
-                    Log.info("dragtest: event create failed \(type.rawValue)")
                     return
                 }
                 NSApp.postEvent(ev, atStart: false)
@@ -554,7 +463,6 @@ struct HarnessWebView: NSViewRepresentable {
                     post(.leftMouseUp, at: NSPoint(x: 480, y: h - 14 + 48))
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         let moved = abs(window.frame.origin.x - origin0.x) > 2 || abs(window.frame.origin.y - origin0.y) > 2
-                        Log.info("dragtest: after=\(window.frame.origin) moved=\(moved)")
                         window.setFrameOrigin(origin0)
                         // postEvent 路由端到端验证：合成点击侧栏折叠按钮（240..268, 距顶 50）
                         let p = NSPoint(x: 254, y: h - 50)
@@ -563,7 +471,6 @@ struct HarnessWebView: NSViewRepresentable {
                             post(.leftMouseUp, at: p)
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                                 webView.evaluateJavaScript("!!document.querySelector('.hHd-Xa_collapsed')") { r, _ in
-                                    Log.info("dragtest: postedClickCollapse=\(String(describing: r))")
                                 }
                             }
                         }
@@ -590,11 +497,9 @@ struct HarnessWebView: NSViewRepresentable {
         /// 原生下载 session 导出 ZIP 到 ~/Downloads 并提示
         @MainActor
         static func download(url: URL) async {
-            Log.info("download: 开始下载 \(url.absoluteString)")
             do {
                 let (data, response) = try await URLSession.shared.data(from: url)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                    Log.info("download: HTTP 非 200")
                     return
                 }
                 // 文件名：session-log-<id>.zip
@@ -605,7 +510,6 @@ struct HarnessWebView: NSViewRepresentable {
                 try? FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
                 let file = downloads.appendingPathComponent("session-log-\(sessionId).zip")
                 try data.write(to: file)
-                Log.info("download: 已保存 \(file.path)")
                 // 通知 + 在 Finder 中显示
                 let script = "display notification \"已保存 \(file.lastPathComponent)\" with title \"DSH Desktop 会话导出\""
                 let process = Process()
@@ -614,18 +518,15 @@ struct HarnessWebView: NSViewRepresentable {
                 try? process.run()
                 NSWorkspace.shared.activateFileViewerSelecting([file])
             } catch {
-                Log.info("download: 失败 \(error.localizedDescription)")
             }
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            Log.info("webview: didFailProvisional \(error.localizedDescription)")
             isLoading = false
             parent.onLoadState(.failed)
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            Log.info("webview: didFail \(error.localizedDescription)")
             isLoading = false
             parent.onLoadState(.failed)
         }

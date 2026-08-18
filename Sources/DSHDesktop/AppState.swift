@@ -2,11 +2,6 @@ import Foundation
 import Combine
 
 /// Token 用量统计（对齐 DSH 官方 StatsLine 口径，见 client-ui-conversation）
-struct TokenStats: Equatable {
-    var billedInputTokens: Int = 0     // 计费输入 = uncached + cacheRead + cacheWrite
-    var outputTokens: Int = 0          // 输出
-    var cacheHitPercent: Int?          // 缓存命中率 = round(cacheRead / billedInput * 100)
-}
 
 /// DSH 服务器状态
 enum ServerStatus: Equatable {
@@ -44,15 +39,11 @@ final class AppState: ObservableObject {
     @Published var pageLoaded: Bool = false
     @Published var bridgeConnected: Bool = false
     @Published var bridgeInfo: String = ""
-    @Published var stats: TokenStats?
     /// GUI 当前打开的会话（WebView fetch 钩子上报）；nil = 未知，退回最近活跃
-    @Published var currentSessionId: String?
 
-    // MARK: - Appearance（默认 Official，持久化）
+    // MARK: - 窗口增强（持久化）
 
-    @Published var appearanceId: String = AppearanceCatalog.official.id
     @Published var immersiveTitlebar: Bool = true
-    @Published var zhOverlay: Bool = true
 
     // MARK: - 设置（UserDefaults 持久化）
 
@@ -68,13 +59,7 @@ final class AppState: ObservableObject {
         serverCommand = defaults.string(forKey: "serverCommand") ?? "dsh --profile web"
         autoStartServer = defaults.object(forKey: "autoStartServer") as? Bool ?? true
         keepServerOnQuit = defaults.object(forKey: "keepServerOnQuit") as? Bool ?? false
-        appearanceId = defaults.string(forKey: "appearanceId") ?? AppearanceCatalog.official.id
-        if !AppearanceCatalog.isKnown(appearanceId) {
-            appearanceId = AppearanceCatalog.official.id
-        }
-        let toggles = EnhancementToggles(defaults: defaults)
-        immersiveTitlebar = toggles.immersiveTitlebar
-        zhOverlay = toggles.zhOverlay
+        immersiveTitlebar = defaults.object(forKey: "immersiveTitlebar") as? Bool ?? true
     }
 
     var url: URL {
@@ -90,7 +75,6 @@ final class AppState: ObservableObject {
         defaults.set(serverCommand, forKey: "serverCommand")
         defaults.set(autoStartServer, forKey: "autoStartServer")
         defaults.set(keepServerOnQuit, forKey: "keepServerOnQuit")
-        defaults.set(appearanceId, forKey: "appearanceId")
-        EnhancementToggles(immersiveTitlebar: immersiveTitlebar, zhOverlay: zhOverlay).save(defaults)
+        defaults.set(immersiveTitlebar, forKey: "immersiveTitlebar")
     }
 }

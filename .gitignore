@@ -7,3 +7,7 @@ build/
 
 # 临时调试文件
 .tmp/
+
+# DSH Launcher（已剥离出仓库，仅本地保留）
+Sources/DSHLauncher/
+Resources/Info-Launcher.plist

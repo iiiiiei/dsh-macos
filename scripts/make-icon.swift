@@ -10,18 +10,6 @@ let svgPath = CommandLine.arguments[1]
 let outputDir = CommandLine.arguments[2]
 let menubarPng = CommandLine.arguments[3]
 
-guard let svgData = try? Data(contentsOf: URL(fileURLWithPath: svgPath)),
-      var svgString = String(data: svgData, encoding: .utf8) else {
-    FileHandle.standardError.write("cannot load \(svgPath)\n".data(using: .utf8)!)
-    exit(1)
-}
-// 应用图标使用白色鲸鱼；菜单栏模板仍用原始黑色。
-svgString = svgString.replacingOccurrences(of: "fill=\"#000\"", with: "fill=\"#FFFFFF\"")
-guard let whiteSvgData = svgString.data(using: .utf8),
-      let whiteSvg = NSImage(data: whiteSvgData) else {
-    FileHandle.standardError.write("cannot create white whale image\n".data(using: .utf8)!)
-    exit(1)
-}
 guard let svg = NSImage(contentsOfFile: svgPath) else {
     FileHandle.standardError.write("cannot load \(svgPath)\n".data(using: .utf8)!)
     exit(1)
@@ -59,53 +47,29 @@ func renderPixels(size: Int, draw: (CGContext, CGFloat) -> Void) -> NSBitmapImag
     return rep
 }
 
-/// 应用图标：macOS Big Sur 风格圆角 + 深色渐变背景 + 白色鲸鱼。
-/// 保留鲸鱼图案内容，仅改变背景呈现方式以融入 macOS Dock。
+/// 应用图标：白色圆角底 + 黑色鲸鱼（还原官方白底黑鲸风格）。
+/// macOS 图标规范：圆角 ~21%、内容留边 ~4.5%、鲸鱼居中约 58%（内容落在系统安全区内）。
 func renderAppIcon(size: Int) -> NSImage {
     let rep = renderPixels(size: size) { ctx, s in
-        let corner = s * 0.224 // Big Sur 圆角
-        // macOS 图标规范：内容不要顶格，留出约 8% 边距，
-        // 这样 Dock 中行高/列宽才和其他原生 App 一致。
-        let inset = s * 0.08
+        let inset = s * 0.045
         let bgRect = CGRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
+        let corner = s * 0.21
         let shape = CGPath(roundedRect: bgRect, cornerWidth: corner, cornerHeight: corner, transform: nil)
 
-        // 1. 投影：让图标在 Dock/桌面有层次感
-        ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -s * 0.02),
-                      blur: s * 0.05,
-                      color: NSColor.black.withAlphaComponent(0.35).cgColor)
+        // 纯白底（浅色 Dock 下清晰，官方 iOS 图标同款）
         ctx.addPath(shape)
+        ctx.setFillColor(NSColor.white.cgColor)
         ctx.fillPath()
-        ctx.restoreGState()
 
-        // 2. 渐变背景（深灰到稍浅的深灰，类似系统 App 图标）
-        ctx.saveGState()
-        ctx.addPath(shape)
-        ctx.clip()
-        let gradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [
-                NSColor(calibratedRed: 0.20, green: 0.20, blue: 0.22, alpha: 1.0).cgColor,
-                NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0).cgColor
-            ] as CFArray,
-            locations: [0.0, 1.0]
-        )!
-        ctx.drawLinearGradient(gradient,
-                               start: CGPoint(x: 0, y: s),
-                               end: CGPoint(x: 0, y: 0),
-                               options: [])
-        ctx.restoreGState()
-
-        // 3. 白色鲸鱼：居中，高度约占 55%
-        let whaleSize = s * 0.55
+        // 黑色鲸鱼：居中，高度约占 58%，四周留白均衡
+        let whaleSize = s * 0.58
         let whaleRect = NSRect(
             x: (s - whaleSize) / 2,
             y: (s - whaleSize) / 2,
             width: whaleSize,
             height: whaleSize
         )
-        whiteSvg.draw(in: whaleRect)
+        svg.draw(in: whaleRect)
     }
     let image = NSImage(size: rep.size)
     image.addRepresentation(rep)
@@ -125,7 +89,7 @@ for spec in specs {
     print("wrote \(url.path) (\(spec.size)x\(spec.size))")
 }
 
-// 菜单栏模板图标：36x36 像素（逻辑 18pt，@2x），黑色鲸鱼 alpha 形状
+// 菜单栏模板图标：36x36 黑色鲸鱼（alpha 形状，模板渲染自动适配深浅色）
 let menuRep = renderPixels(size: 36) { ctx, s in
     svg.draw(in: NSRect(x: 0, y: 0, width: s, height: s))
 }

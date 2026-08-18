@@ -48,7 +48,7 @@ struct SettingsView: View {
 
             Section("关于") {
                 LabeledContent("DSH Desktop", value: "v1.0.0")
-                LabeledContent("DSH 版本", value: "rc.6")
+                LabeledContent("DSH 版本", value: "rc.7")
                 LabeledContent("最低系统", value: "macOS 13+")
             }
         }
